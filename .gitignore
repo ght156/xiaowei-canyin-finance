@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+
+# 运行数据（数据库、备份）不入库
+backend/data/
+
+# 本地环境配置
+.env
+backend/.env
+
+# Node / 前端
+node_modules/
+frontend/dist/
+frontend/dev-dist/
+
+# IDE / 系统
+.idea/
+.vscode/
+Thumbs.db
+.DS_Store
+
+# 个人设计文档（含个人信息，不入公开仓库）
+*.docx
+~$*
+
+# ZCode 会话文件
+.zcode/
