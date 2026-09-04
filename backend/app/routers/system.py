@@ -24,15 +24,30 @@ router = APIRouter(tags=["system"])
 # ---------------- 用户管理 ----------------
 @router.get("/api/users", response_model=list[UserOut])
 def list_users(db: Session = Depends(get_db), admin: User = Depends(require_admin)):
-    return db.scalars(select(User).order_by(User.id)).all()
+    # 已删除的用户不再出现在列表中，其历史流水与审计记录中的名字保留
+    return db.scalars(
+        select(User).where(User.deleted_at.is_(None)).order_by(User.id)
+    ).all()
 
 
 @router.post("/api/users", response_model=UserOut, status_code=201)
 def create_user(body: UserCreate, db: Session = Depends(get_db), admin: User = Depends(require_admin)):
     username = body.username.strip()
-    exists = db.scalar(select(User.id).where(User.username == username))
-    if exists:
+    existing = db.scalar(select(User).where(User.username == username))
+    if existing and existing.deleted_at is None:
         raise HTTPException(400, "用户名已存在")
+    if existing:
+        # 同名用户曾被删除：恢复账号（用新密码、新角色）
+        existing.deleted_at = None
+        existing.status = "active"
+        existing.role = body.role
+        existing.password_hash = hash_password(body.password)
+        log_action(db, admin.id, "restore", "user", existing.id,
+                   after={"username": username, "role": body.role})
+        db.commit()
+        db.refresh(existing)
+        return existing
+
     user = User(username=username, password_hash=hash_password(body.password), role=body.role)
     db.add(user)
     db.flush()
@@ -45,7 +60,7 @@ def create_user(body: UserCreate, db: Session = Depends(get_db), admin: User = D
 @router.put("/api/users/{user_id}", response_model=UserOut)
 def update_user(user_id: int, body: UserUpdate, db: Session = Depends(get_db), admin: User = Depends(require_admin)):
     user = db.get(User, user_id)
-    if user is None:
+    if user is None or user.deleted_at is not None:
         raise HTTPException(404, "用户不存在")
     before = {"role": user.role, "status": user.status}
     if user.id == admin.id and body.status == "disabled":
@@ -78,6 +93,33 @@ def update_user(user_id: int, body: UserUpdate, db: Session = Depends(get_db), a
     db.commit()
     db.refresh(user)
     return user
+
+
+@router.delete("/api/users/{user_id}")
+def delete_user(user_id: int, db: Session = Depends(get_db), admin: User = Depends(require_admin)):
+    """软删除用户：账号从列表与登录中移除，其历史流水与审计记录中的名字保留。"""
+    user = db.get(User, user_id)
+    if user is None or user.deleted_at is not None:
+        raise HTTPException(404, "用户不存在")
+    if user.id == admin.id:
+        raise HTTPException(400, "不能删除自己的账号")
+
+    # 删除管理员前确认系统仍有其他启用中的管理员
+    if user.role == "admin" and user.status == "active":
+        others = db.scalar(
+            select(func.count(User.id)).where(
+                User.role == "admin", User.status == "active", User.id != user.id
+            )
+        )
+        if not others:
+            raise HTTPException(400, "系统至少需要保留一个启用的管理员账号。")
+
+    before = {"username": user.username, "role": user.role, "status": user.status}
+    user.deleted_at = naive_now()
+    user.status = "disabled"
+    log_action(db, admin.id, "delete", "user", user.id, before=before)
+    db.commit()
+    return {"ok": True, "message": "用户已删除，其历史流水与审计记录仍保留"}
 
 
 # ---------------- 审计日志 ----------------

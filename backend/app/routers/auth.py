@@ -55,6 +55,8 @@ def login(body: LoginRequest, request: Request, db: Session = Depends(get_db)):
     if user is None or not verify_password(body.password, user.password_hash):
         _record_failure(key)
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "用户名或密码错误")
+    if user.deleted_at is not None:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "该账号已被删除")
     if user.status != "active":
         raise HTTPException(status.HTTP_403_FORBIDDEN, "账号已停用，请联系管理员")
 

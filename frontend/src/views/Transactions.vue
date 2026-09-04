@@ -89,7 +89,11 @@
           <van-field v-model="editForm.amount" type="text" inputmode="decimal" label="金额（元）" />
           <van-field label="分类" readonly is-link :model-value="editCategoryName" @click="showEditCat = true" />
           <van-field label="支付方式" readonly is-link :model-value="paymentLabel(editForm.payment_method)" @click="showEditPay = true" />
-          <van-field label="日期" readonly is-link :model-value="editForm.biz_date" @click="showEditDate = true" />
+          <van-field label="日期" readonly is-link :model-value="editForm.biz_date" @click="showEditDate = true">
+            <template #button>
+              <van-button size="small" round @click.stop="setEditDateToday">今天</van-button>
+            </template>
+          </van-field>
           <van-field v-model="editForm.remark" label="备注" maxlength="200" />
         </van-cell-group>
         <div class="detail-btns">
@@ -134,7 +138,7 @@ import api from '../api'
 import { useAuthStore } from '../stores/auth'
 import { useShopStore } from '../stores/shops'
 import {
-  PAYMENTS, dayjs, formatDateCN, formatMoney, paymentLabel, typeLabel, yuanToCents
+  PAYMENTS, dayjs, formatDateCN, formatMoney, paymentLabel, today, typeLabel, yuanToCents
 } from '../utils/format'
 
 const auth = useAuthStore()
@@ -308,8 +312,17 @@ function startEdit() {
     biz_date: current.value.biz_date,
     remark: current.value.remark || ''
   }
+  // 日期选择器定位到流水当前日期，避免打开时停在空白/最小日期
+  editDateParts.value = editForm.value.biz_date.split('-')
   showEditDate.value = false
   showEdit.value = true
+}
+
+/** 以当前日期为参考一键调整 */
+function setEditDateToday() {
+  editForm.value.biz_date = today()
+  editDateParts.value = today().split('-')
+  showToast('日期已改为今天')
 }
 
 function onEditDateConfirm({ selectedValues }) {

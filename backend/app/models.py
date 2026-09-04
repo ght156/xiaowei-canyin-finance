@@ -26,6 +26,7 @@ class User(Base):
     role: Mapped[str] = mapped_column(String(20), default="owner")  # admin=管理员 / owner=店主
     status: Mapped[str] = mapped_column(String(20), default="active")  # active / disabled
     created_at: Mapped[datetime] = mapped_column(DateTime, default=naive_now)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)  # 软删除
 
 
 class Shop(Base):
@@ -35,6 +36,7 @@ class Shop(Base):
     name: Mapped[str] = mapped_column(String(50), unique=True)
     status: Mapped[str] = mapped_column(String(20), default="active")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=naive_now)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)  # 软删除
 
 
 class Category(Base):
@@ -47,6 +49,7 @@ class Category(Base):
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
     status: Mapped[str] = mapped_column(String(20), default="active")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=naive_now)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)  # 软删除
 
 
 class Transaction(Base):

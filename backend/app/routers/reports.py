@@ -25,7 +25,7 @@ def _resolve_shop(db: Session, shop_id: int | None) -> tuple[int | None, str]:
     if shop_id is None:
         return None, "全部店铺"
     shop = db.get(Shop, shop_id)
-    if shop is None:
+    if shop is None or shop.deleted_at is not None:
         raise HTTPException(400, "店铺不存在")
     return shop_id, shop.name
 

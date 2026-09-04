@@ -49,7 +49,7 @@ def get_current_user(
     except (jwt.PyJWTError, TypeError, ValueError):
         raise credentials_error
     user = db.get(User, user_id)
-    if user is None or user.status != "active":
+    if user is None or user.status != "active" or user.deleted_at is not None:
         raise credentials_error
     return user
 

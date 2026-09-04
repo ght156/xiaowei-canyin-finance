@@ -46,12 +46,12 @@ def serialize_tx(tx: Transaction) -> dict:
 
 def _validate_refs(db: Session, shop_id: int, tx_type: str, category_id: int) -> None:
     shop = db.get(Shop, shop_id)
-    if shop is None:
+    if shop is None or shop.deleted_at is not None:
         raise HTTPException(400, "店铺不存在")
     if shop.status != "active":
         raise HTTPException(400, "店铺已停用")
     cat = db.get(Category, category_id)
-    if cat is None:
+    if cat is None or cat.deleted_at is not None:
         raise HTTPException(400, "分类不存在")
     if cat.type != tx_type:
         raise HTTPException(400, "分类类型与收支类型不匹配")
@@ -214,7 +214,7 @@ def update_transaction(
 
     if body.category_id is not None:
         cat = db.get(Category, body.category_id)
-        if cat is None or cat.type != tx.type:
+        if cat is None or cat.deleted_at is not None or cat.type != tx.type:
             raise HTTPException(400, "分类不存在或类型不匹配")
         # 只有主动更换分类时才要求启用中；保留历史停用分类不动，保护历史数据
         if cat.id != tx.category_id and cat.status != "active":

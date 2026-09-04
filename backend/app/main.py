@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .config import APP_NAME, CORS_ORIGINS
 from .database import Base, SessionLocal, engine
+from .migrations import ensure_schema_upgrades
 from .routers import auth, categories, reports, shops, system, transactions
 from .services.backup import maybe_auto_backup
 
@@ -14,13 +15,14 @@ from .services.backup import maybe_auto_backup
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     Base.metadata.create_all(engine)
+    ensure_schema_upgrades()  # 旧库补齐新增列，升级不丢数据
     # 每天首次启动自动备份一次
     with SessionLocal() as db:
         maybe_auto_backup(db)
     yield
 
 
-app = FastAPI(title=APP_NAME, version="1.1.1", lifespan=lifespan)
+app = FastAPI(title=APP_NAME, version="1.1.2", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,

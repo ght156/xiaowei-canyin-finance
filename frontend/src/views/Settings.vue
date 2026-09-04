@@ -19,8 +19,12 @@
     <template v-if="auth.isAdmin">
       <!-- 店铺管理 -->
       <van-cell-group inset title="店铺管理" class="block">
-        <van-cell v-for="s in shops" :key="s.id" :title="s.name" :value="s.status === 'active' ? '营业中' : '已停用'" is-link
-          @click="toggleShop(s)" />
+        <van-cell v-for="s in shops" :key="s.id" :title="s.name" is-link @click="toggleShop(s)">
+          <template #value>
+            <span class="cell-status">{{ s.status === 'active' ? '营业中' : '已停用' }}</span>
+            <van-button size="mini" type="danger" plain @click="deleteShop(s)">删除</van-button>
+          </template>
+        </van-cell>
         <van-cell title="新增店铺" icon="plus" clickable @click="addShop" />
       </van-cell-group>
 
@@ -39,6 +43,7 @@
                   @click="toggleCategory(c)">
                   {{ c.status === 'active' ? '停用' : '启用' }}
                 </van-button>
+                <van-button size="mini" type="danger" plain @click="deleteCategory(c)">删除</van-button>
               </template>
             </van-cell>
             <van-cell title="新增支出分类" icon="plus" clickable @click="addCategory('expense')" />
@@ -55,6 +60,7 @@
                   @click="toggleCategory(c)">
                   {{ c.status === 'active' ? '停用' : '启用' }}
                 </van-button>
+                <van-button size="mini" type="danger" plain @click="deleteCategory(c)">删除</van-button>
               </template>
             </van-cell>
             <van-cell title="新增收入分类" icon="plus" clickable @click="addCategory('income')" />
@@ -72,6 +78,7 @@
             <van-button size="mini" :type="u.status === 'active' ? 'danger' : 'primary'" plain @click="toggleUser(u)">
               {{ u.status === 'active' ? '停用' : '启用' }}
             </van-button>
+            <van-button v-if="u.id !== auth.user?.id" size="mini" type="danger" plain @click="deleteUser(u)">删除</van-button>
           </template>
         </van-cell>
         <van-cell title="新增用户" icon="plus" clickable @click="addUser" />
@@ -99,7 +106,7 @@
 
     <div class="block">
       <van-button block round type="danger" plain @click="logout">退出登录</van-button>
-      <div class="ver">小微餐饮财务管理系统 v1.1</div>
+      <div class="ver">小微餐饮财务管理系统 v1.1.2</div>
     </div>
 
     <!-- 备份列表 -->
@@ -287,6 +294,49 @@ async function toggleUser(u) {
   } catch { /* 取消 */ }
 }
 
+// ---------- 删除（软删除：历史记录保留） ----------
+async function deleteShop(s) {
+  try {
+    await showConfirmDialog({
+      title: '确认删除店铺',
+      message: `删除后「${s.name}」将不再出现在选择列表，历史流水与统计仍保留店名。确定删除吗？`,
+      confirmButtonText: '删除',
+      confirmButtonColor: '#ee0a24'
+    })
+    await api.delete(`/shops/${s.id}`)
+    showToast('已删除，历史记录仍保留')
+    loadAll()
+  } catch { /* 取消 */ }
+}
+
+async function deleteCategory(c) {
+  try {
+    await showConfirmDialog({
+      title: '确认删除分类',
+      message: `删除后「${c.name}」不能再用于记账，历史流水的分类名仍保留。确定删除吗？`,
+      confirmButtonText: '删除',
+      confirmButtonColor: '#ee0a24'
+    })
+    await api.delete(`/categories/${c.id}`)
+    showToast('已删除，历史记录仍保留')
+    loadAll()
+  } catch { /* 取消 */ }
+}
+
+async function deleteUser(u) {
+  try {
+    await showConfirmDialog({
+      title: '确认删除用户',
+      message: `删除后「${u.username}」将无法登录，其历史流水仍保留创建人名字。确定删除吗？`,
+      confirmButtonText: '删除',
+      confirmButtonColor: '#ee0a24'
+    })
+    await api.delete(`/users/${u.id}`)
+    showToast('已删除，历史记录仍保留')
+    loadAll()
+  } catch { /* 取消 */ }
+}
+
 // ---------- 备份 ----------
 async function backupNow() {
   try {
@@ -412,5 +462,21 @@ onMounted(loadAll)
 }
 .van-button + .van-button {
   margin-left: 6px;
+}
+.cell-status {
+  color: #666;
+  margin-right: 8px;
+  font-size: 13px;
+}
+/* 操作按钮较多时允许换行，避免小屏溢出 */
+:deep(.van-cell__value) {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+:deep(.van-cell__value .van-button + .van-button) {
+  margin-left: 0;
 }
 </style>

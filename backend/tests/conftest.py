@@ -38,12 +38,16 @@ def clean_tables():
         db.execute(delete(Transaction))
         db.execute(delete(AuditLog))
         db.execute(delete(BackupRecord))
-        db.execute(update(Category).values(status="active"))
-        db.execute(update(Shop).values(status="active"))
+        db.execute(update(Category).values(status="active", deleted_at=None))
+        db.execute(update(Shop).values(status="active", deleted_at=None))
         # 用户表恢复到种子状态（id 1=admin，2=owner），删除测试中新建的用户
         db.execute(delete(User).where(User.id > 2))
-        db.execute(update(User).where(User.id == 1).values(role="admin", status="active"))
-        db.execute(update(User).where(User.id == 2).values(role="owner", status="active"))
+        db.execute(
+            update(User).where(User.id == 1).values(role="admin", status="active", deleted_at=None)
+        )
+        db.execute(
+            update(User).where(User.id == 2).values(role="owner", status="active", deleted_at=None)
+        )
         db.commit()
     yield
 
