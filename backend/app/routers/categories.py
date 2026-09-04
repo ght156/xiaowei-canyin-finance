@@ -1,4 +1,6 @@
 """收支分类管理：所有用户可读（启用中的），管理员可增改（新增/停用/排序）。"""
+from typing import Literal
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -14,13 +16,13 @@ router = APIRouter(prefix="/api/categories", tags=["categories"])
 
 @router.get("", response_model=list[CategoryOut])
 def list_categories(
-    type: str | None = None,
+    type: Literal["income", "expense"] | None = None,
     include_disabled: str = "false",
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
     q = select(Category).order_by(Category.type, Category.sort_order, Category.id)
-    if type in ("income", "expense"):
+    if type is not None:
         q = q.where(Category.type == type)
     if not (include_disabled in ("1", "true") and user.role == "admin"):
         q = q.where(Category.status == "active")

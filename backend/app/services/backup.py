@@ -11,11 +11,12 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..config import BACKUP_DIR, BACKUP_KEEP, DB_PATH
+from ..database import engine
 from ..models import BackupRecord
 from ..tz import naive_now
 
 # 恢复前要求备份文件必须包含的关键表
-REQUIRED_TABLES = {"users", "shops", "categories", "transactions", "audit_logs"}
+REQUIRED_TABLES = {"users", "shops", "categories", "transactions", "audit_logs", "backup_records"}
 
 PRE_RESTORE_KEEP = 5  # 安全备份单独保留最近 5 份
 
@@ -49,9 +50,23 @@ def validate_backup_file(path: Path) -> None:
         raise ValueError("备份文件不是有效的 SQLite 数据库")
 
 
+def _validate_restorable(path: Path) -> None:
+    """备份里必须还存在启用中的管理员，否则恢复后系统将无法管理。"""
+    conn = sqlite3.connect(f"file:{path.as_posix()}?mode=ro", uri=True)
+    try:
+        row = conn.execute(
+            "SELECT COUNT(*) FROM users WHERE role='admin' AND status='active'"
+        ).fetchone()
+    finally:
+        conn.close()
+    if not row or not row[0]:
+        raise ValueError("该备份中没有启用中的管理员账号，恢复后将无法登录管理，已阻止本次恢复")
+
+
 def create_backup(db: Session, backup_type: str = "manual") -> BackupRecord:
     BACKUP_DIR.mkdir(parents=True, exist_ok=True)
-    ts = naive_now().strftime("%Y%m%d_%H%M%S")
+    # 文件名带微秒：避免同一秒内自动备份+手动备份同名互相覆盖
+    ts = naive_now().strftime("%Y%m%d_%H%M%S_%f")
     prefix = "pre_restore" if backup_type == "pre_restore" else "backup"
     dest = BACKUP_DIR / f"{prefix}_{ts}.db"
 
@@ -74,11 +89,13 @@ def create_backup(db: Session, backup_type: str = "manual") -> BackupRecord:
 
 
 def _prune_old_backups(db: Session) -> None:
-    """普通备份保留最近 BACKUP_KEEP 份，恢复前安全备份保留最近 PRE_RESTORE_KEEP 份。"""
-    for prefix, keep in (("backup_", BACKUP_KEEP), ("pre_restore_", PRE_RESTORE_KEEP)):
+    """按备份类型分别保留：auto/manual 各 BACKUP_KEEP 份，pre_restore 单独 PRE_RESTORE_KEEP 份。
+    手动备份与恢复前安全备份不会挤占每日自动备份的配额。"""
+    quotas = {"auto": BACKUP_KEEP, "manual": BACKUP_KEEP, "pre_restore": PRE_RESTORE_KEEP}
+    for btype, keep in quotas.items():
         records = db.scalars(
             select(BackupRecord)
-            .where(BackupRecord.file_name.like(f"{prefix}%"))
+            .where(BackupRecord.backup_type == btype)
             .order_by(BackupRecord.created_at.desc(), BackupRecord.id.desc())
         ).all()
         for old in records[keep:]:
@@ -134,6 +151,7 @@ def restore_backup(db: Session, file_name: str) -> BackupRecord:
         raise ValueError("非法文件名")
     target = BACKUP_DIR / file_name
     validate_backup_file(target)
+    _validate_restorable(target)
 
     # ① 恢复前安全备份（safety backup）
     safety = create_backup(db, backup_type="pre_restore")
@@ -160,4 +178,8 @@ def restore_backup(db: Session, file_name: str) -> BackupRecord:
         )
     )
     db.commit()
+    # ⑤ 重建连接状态：清理本 Session 的过期缓存对象，并丢弃连接池中
+    # 可能持有旧库页缓存的连接，后续请求自动拿到恢复后的数据（无需重启）。
+    db.expire_all()
+    engine.dispose()
     return safety

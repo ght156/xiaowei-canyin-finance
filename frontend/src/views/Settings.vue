@@ -328,7 +328,7 @@ async function downloadBackup(b) {
 
 // ---------- 回收站 ----------
 async function openRecycle() {
-  const { data } = await api.get('/transactions', { params: { include_deleted: 1, page_size: 100 } })
+  const { data } = await api.get('/transactions', { params: { deleted_only: 1, page_size: 100 } })
   recycle.value = data.items
   showRecycle.value = true
 }

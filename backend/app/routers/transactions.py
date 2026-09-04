@@ -1,6 +1,7 @@
 """收支流水：新增（所有用户）、查询、管理员编辑/软删除/恢复，全部写审计。"""
 from datetime import date as _date_type
 from datetime import datetime, timedelta
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
@@ -131,18 +132,24 @@ def list_transactions(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     shop_id: int | None = None,
-    type: str | None = None,
+    type: Literal["income", "expense"] | None = None,
     category_id: int | None = None,
     start_date=None,
     end_date=None,
     keyword: str | None = None,
     include_deleted: str = "false",
+    deleted_only: str = "false",
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
     q = select(Transaction)
-    show_deleted = include_deleted in ("1", "true")
-    if show_deleted:
+    if deleted_only in ("1", "true"):
+        # 回收站：只看已删除的流水（仅管理员）
+        if user.role != "admin":
+            raise HTTPException(403, "仅管理员可查看回收站")
+        q = q.where(Transaction.deleted_at.is_not(None))
+    elif include_deleted in ("1", "true"):
+        # 管理员混合视图：正常 + 已删除（列表中标记"已删除"）
         if user.role != "admin":
             raise HTTPException(403, "仅管理员可查看回收站")
     else:
@@ -150,7 +157,7 @@ def list_transactions(
 
     if shop_id is not None:
         q = q.where(Transaction.shop_id == shop_id)
-    if type in ("income", "expense"):
+    if type is not None:
         q = q.where(Transaction.type == type)
     if category_id is not None:
         q = q.where(Transaction.category_id == category_id)
