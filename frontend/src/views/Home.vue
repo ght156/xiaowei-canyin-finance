@@ -6,26 +6,48 @@
       </template>
     </van-nav-bar>
 
-    <div class="stat-card">
-      <div class="stat-row">
-        <div class="stat-item">
-          <div class="stat-label">今日收入</div>
-          <div class="stat-value amount-income">{{ formatMoney(ov.today?.income ?? '0.00') }}</div>
+    <!-- 员工首页：只有营业额与笔数，不显示利润 -->
+    <template v-if="auth.isEmployee">
+      <div class="stat-card">
+        <div class="stat-label">今日营业额</div>
+        <div class="emp-income">{{ formatMoney(emp.income ?? '0.00') }}</div>
+        <div class="emp-sub">
+          今日已记 <b>{{ emp.count ?? 0 }}</b> 笔
+          <template v-if="emp.expense"> · 今日支出 {{ formatMoney(emp.expense) }}</template>
         </div>
-        <div class="stat-item">
-          <div class="stat-label">今日支出</div>
-          <div class="stat-value amount-expense">{{ formatMoney(ov.today?.expense ?? '0.00') }}</div>
+      </div>
+    </template>
+
+    <!-- 管理员/店主首页 -->
+    <template v-else>
+      <div class="stat-card">
+        <div class="stat-row">
+          <div class="stat-item">
+            <div class="stat-label">今日收入</div>
+            <div class="stat-value amount-income">{{ formatMoney(ov.today?.income ?? '0.00') }}</div>
+          </div>
+          <div class="stat-item">
+            <div class="stat-label">今日支出</div>
+            <div class="stat-value amount-expense">{{ formatMoney(ov.today?.expense ?? '0.00') }}</div>
+          </div>
+        </div>
+        <div class="profit-line">
+          <span class="stat-label">今日利润</span>
+          <span class="profit-value">{{ formatMoney(ov.today?.profit ?? '0.00') }}</span>
+        </div>
+        <div class="compare-line" v-if="yesterdayLoaded">
+          昨日收入 {{ formatMoney(ov.yesterday?.income ?? '0.00') }}
+          <span :class="diffClass">{{ diffText }}</span>
         </div>
       </div>
-      <div class="profit-line">
-        <span class="stat-label">今日利润</span>
-        <span class="profit-value">{{ formatMoney(ov.today?.profit ?? '0.00') }}</span>
-      </div>
-      <div class="compare-line" v-if="yesterdayLoaded">
-        昨日收入 {{ formatMoney(ov.yesterday?.income ?? '0.00') }}
-        <span :class="diffClass">{{ diffText }}</span>
-      </div>
-    </div>
+
+      <van-cell-group inset title="本月概况" class="month-card">
+        <van-cell title="本月收入" :value="formatMoney(ov.month?.income ?? '0.00')" />
+        <van-cell title="本月支出" :value="formatMoney(ov.month?.expense ?? '0.00')" />
+        <van-cell title="本月利润" :value="formatMoney(ov.month?.profit ?? '0.00')" />
+        <van-cell title="利润率" :value="ov.month?.profit_rate ?? '—'" />
+      </van-cell-group>
+    </template>
 
     <div class="entry-btns">
       <van-button type="success" size="large" round icon="plus" to="/entry/income" class="entry-btn">
@@ -35,13 +57,6 @@
         记支出
       </van-button>
     </div>
-
-    <van-cell-group inset title="本月概况" class="month-card">
-      <van-cell title="本月收入" :value="formatMoney(ov.month?.income ?? '0.00')" />
-      <van-cell title="本月支出" :value="formatMoney(ov.month?.expense ?? '0.00')" />
-      <van-cell title="本月利润" :value="formatMoney(ov.month?.profit ?? '0.00')" />
-      <van-cell title="利润率" :value="ov.month?.profit_rate ?? '—'" />
-    </van-cell-group>
 
     <!-- 店铺切换 -->
     <van-popup v-model:show="showShopPicker" round position="bottom">
@@ -58,16 +73,19 @@
 <script setup>
 import { computed, onActivated, ref } from 'vue'
 import api from '../api'
+import { useAuthStore } from '../stores/auth'
 import { useShopStore } from '../stores/shops'
 import { formatMoney, yuanToCents } from '../utils/format'
 
+const auth = useAuthStore()
 const shopStore = useShopStore()
 const ov = ref({})
+const emp = ref({})
 const showShopPicker = ref(false)
 const yesterdayLoaded = ref(false)
 
 const shopColumns = computed(() => [
-  { text: '全部店铺', value: 0 },
+  ...(auth.isEmployee ? [] : [{ text: '全部店铺', value: 0 }]),
   ...shopStore.list.map((s) => ({ text: s.name, value: s.id }))
 ])
 
@@ -76,7 +94,7 @@ const diffCents = computed(
 )
 const diffText = computed(() => {
   const c = diffCents.value
-  if (c > 0) return `比昨日 +${formatMoney(c).replace('¥', '¥')}`
+  if (c > 0) return `比昨日 +${formatMoney(c)}`
   if (c < 0) return `比昨日 ${formatMoney(c)}`
   return '与昨日持平'
 })
@@ -85,6 +103,14 @@ const diffClass = computed(() =>
 )
 
 async function loadOverview() {
+  if (auth.isEmployee) {
+    // 员工：仅当前店铺的今日营业额与笔数；后端不返回利润
+    const params = shopStore.currentId ? { shop_id: shopStore.currentId } : {}
+    const { data } = await api.get('/reports/employee-summary', { params })
+    emp.value = data
+    if (data.shop_id) shopStore.setCurrent(data.shop_id)
+    return
+  }
   const { data } = await api.get('/reports/overview', {
     params: shopStore.currentId ? { shop_id: shopStore.currentId } : {}
   })
@@ -111,6 +137,20 @@ onActivated(async () => {
   background: #fff;
   padding: 20px 8px 14px;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+  text-align: center;
+}
+.emp-income {
+  font-size: 40px;
+  font-weight: 800;
+  color: #07c160;
+  margin: 8px 0;
+}
+.emp-sub {
+  color: #666;
+  font-size: 15px;
+}
+.emp-sub b {
+  color: #1989fa;
 }
 .stat-row {
   display: flex;

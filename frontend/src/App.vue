@@ -7,7 +7,7 @@
   <van-tabbar route v-if="showTabbar">
     <van-tabbar-item replace to="/" icon="wap-home-o">首页</van-tabbar-item>
     <van-tabbar-item replace to="/transactions" icon="bill-o">流水</van-tabbar-item>
-    <van-tabbar-item replace to="/reports" icon="chart-trending-o">分析</van-tabbar-item>
+    <van-tabbar-item v-if="!auth.isEmployee" replace to="/reports" icon="chart-trending-o">分析</van-tabbar-item>
     <van-tabbar-item replace to="/settings" icon="user-o">我的</van-tabbar-item>
   </van-tabbar>
 

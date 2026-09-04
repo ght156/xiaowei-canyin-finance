@@ -17,6 +17,9 @@ class LoginRequest(BaseModel):
     password: str = Field(min_length=1, max_length=100)
 
 
+Role = Literal["admin", "owner", "employee"]
+
+
 class UserOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -25,6 +28,7 @@ class UserOut(BaseModel):
     role: str
     status: str
     created_at: datetime
+    shop_ids: list[int] = []  # 授权店铺；admin 为空（默认全部店铺）
 
 
 class TokenResponse(BaseModel):
@@ -36,13 +40,18 @@ class TokenResponse(BaseModel):
 class UserCreate(BaseModel):
     username: str = Field(min_length=2, max_length=50)
     password: str = Field(min_length=6, max_length=100)
-    role: Literal["admin", "owner"] = "owner"
+    role: Role = "owner"
+    shop_ids: list[int] = []  # owner/employee 的授权店铺；admin 忽略
 
 
 class UserUpdate(BaseModel):
     password: Optional[str] = Field(default=None, min_length=6, max_length=100)
-    role: Optional[Literal["admin", "owner"]] = None
+    role: Optional[Role] = None
     status: Optional[Literal["active", "disabled"]] = None
+
+
+class UserShopsUpdate(BaseModel):
+    shop_ids: list[int]
 
 
 # ---------- 店铺 ----------

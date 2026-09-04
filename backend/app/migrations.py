@@ -1,11 +1,11 @@
-"""轻量数据库迁移：为旧版本数据库补齐新增列，保证升级不丢数据。
+"""轻量数据库迁移：为旧版本数据库补齐新增列/表数据，保证升级不丢数据。
 
-只做增量列补充（SQLite 支持 ALTER TABLE ADD COLUMN 空列），
-所有新列均可为 NULL，旧行为 NULL 即表示"未删除"。
+只做增量变更（SQLite 支持加空列），全部幂等，可重复执行。
 """
 import sqlalchemy
+from sqlalchemy import select
 
-from .database import engine
+from .database import SessionLocal, engine
 
 # (表名, 列名, DDL)
 _ADD_COLUMN_MIGRATIONS = [
@@ -26,3 +26,27 @@ def ensure_schema_upgrades(target_engine: sqlalchemy.Engine | None = None) -> No
             if column not in existing:
                 conn.exec_driver_sql(ddl)
         conn.commit()
+
+
+def bind_owners_to_active_shops() -> None:
+    """V1.2 升级迁移：把每个 owner 用户绑定到当前全部未删除店铺（幂等）。
+
+    admin 默认拥有全部店铺权限，无需绑定。
+    老库升级后 owner 立即可用，不需要删除 app.db 重新 seed。
+    """
+    from .models import Shop, User, UserShop
+
+    with SessionLocal() as db:
+        owners = db.scalars(
+            select(User).where(User.role == "owner", User.deleted_at.is_(None))
+        ).all()
+        shops = db.scalars(select(Shop).where(Shop.deleted_at.is_(None))).all()
+        changed = False
+        for owner in owners:
+            have = {link.shop_id for link in owner.shop_links}
+            for shop in shops:
+                if shop.id not in have:
+                    db.add(UserShop(user_id=owner.id, shop_id=shop.id))
+                    changed = True
+        if changed:
+            db.commit()

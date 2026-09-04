@@ -3,7 +3,7 @@ from pathlib import Path
 
 from app.config import BACKUP_DIR
 
-from tests.conftest import add_tx
+from tests.conftest import add_tx, make_user
 
 
 def test_backup_create_and_list(client, admin_headers):
@@ -16,8 +16,12 @@ def test_backup_create_and_list(client, admin_headers):
     assert any(r["file_name"] == file_name for r in records)
 
 
-def test_backup_requires_admin(client, owner_headers):
-    assert client.post("/api/backups", headers=owner_headers).status_code == 403
+def test_backup_permission_by_role(client, admin_headers, owner_headers):
+    """V1.2：owner 可手动备份；employee 无权。"""
+    assert client.post("/api/backups", headers=owner_headers).status_code == 201
+    emp = make_user(client, admin_headers, username="emp_bk", password="emp12345",
+                    role="employee", shop_ids=[1])
+    assert client.post("/api/backups", headers=emp).status_code == 403
 
 
 def test_export_csv(client, admin_headers, owner_headers, ids):
@@ -36,8 +40,13 @@ def test_export_csv(client, admin_headers, owner_headers, ids):
     assert any("支出" in l and "12.00" in l for l in lines[1:])
 
 
-def test_export_requires_admin(client, owner_headers, ids):
-    assert client.get("/api/export?start=2026-01-01&end=2026-01-31", headers=owner_headers).status_code == 403
+def test_export_permission_by_role(client, admin_headers, owner_headers, ids):
+    """V1.2：owner 可导出（授权店铺范围）；employee 无权。"""
+    resp = client.get("/api/export?start=2026-01-01&end=2026-01-31", headers=owner_headers)
+    assert resp.status_code == 200
+    emp = make_user(client, admin_headers, username="exp_emp", password="emp12345",
+                    role="employee", shop_ids=[ids["zaocan"]])
+    assert client.get("/api/export?start=2026-01-01&end=2026-01-31", headers=emp).status_code == 403
 
 
 def test_export_deleted_excluded(client, admin_headers, owner_headers, ids):

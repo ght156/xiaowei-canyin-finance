@@ -13,6 +13,7 @@ from ..models import Shop, User
 from ..schemas import ShopCreate, ShopOut, ShopUpdate
 from ..security import get_current_user, require_admin
 from ..services.audit import log_action
+from ..permissions import filter_visible_shops
 from ..tz import naive_now
 
 router = APIRouter(prefix="/api/shops", tags=["shops"])
@@ -27,7 +28,9 @@ def list_shops(
     q = select(Shop).where(Shop.deleted_at.is_(None)).order_by(Shop.id)
     if not (include_disabled in ("1", "true") and user.role == "admin"):
         q = q.where(Shop.status == "active")
-    return db.scalars(q).all()
+    shops = list(db.scalars(q).all())
+    # owner/employee 只能看到被授权的店铺；admin 全部
+    return filter_visible_shops(db, shops, user)
 
 
 @router.post("", response_model=ShopOut, status_code=201)

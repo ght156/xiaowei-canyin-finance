@@ -17,6 +17,8 @@ router.beforeEach((to) => {
   const auth = useAuthStore()
   if (!to.meta.public && !auth.isLoggedIn) return '/login'
   if (to.path === '/login' && auth.isLoggedIn) return '/'
+  // 员工无经营分析权限（后端同样拦截）
+  if (to.path === '/reports' && auth.isEmployee) return '/'
   return true
 })
 

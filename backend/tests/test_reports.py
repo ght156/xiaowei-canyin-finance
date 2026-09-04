@@ -92,13 +92,16 @@ def test_expense_categories_breakdown(client, owner_headers, ids):
     assert data[1]["percentage"] == "40.3%"
 
 
-def test_overview_shape(client, owner_headers, ids):
+def test_overview_shape(client, admin_headers, owner_headers, ids):
     resp = client.get("/api/reports/overview", headers=owner_headers)
     assert resp.status_code == 200
     data = resp.json()
-    assert set(data.keys()) >= {"today", "month", "trend", "shop_name"}
-    assert data["shop_name"] == "全部店铺"
+    assert set(data.keys()) >= {"today", "yesterday", "month", "trend", "shop_name"}
+    # V1.2：owner 未指定店铺时显示"我的店铺"（授权范围）；admin 才有"全部店铺"
+    assert data["shop_name"] == "我的店铺"
     assert len(data["trend"]) == 7
+    admin_view = client.get("/api/reports/overview", headers=admin_headers).json()
+    assert admin_view["shop_name"] == "全部店铺"
     resp = client.get(f"/api/reports/overview?shop_id={ids['mianshi']}", headers=owner_headers).json()
     assert resp["shop_name"] == "面食店"
 

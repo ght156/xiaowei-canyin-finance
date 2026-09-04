@@ -18,6 +18,10 @@ from app.main import app  # noqa: E402
 from seed import seed  # noqa: E402
 
 import pytest  # noqa: E402
+from app.security import hash_password  # noqa: E402
+
+_SEED_ADMIN_HASH = hash_password("admin123")
+_SEED_OWNER_HASH = hash_password("owner123")
 
 
 @pytest.fixture(scope="session")
@@ -32,9 +36,10 @@ def clean_tables():
     """每个测试前清空流水/审计/备份记录，并把分类/店铺/用户恢复为种子状态，保证断言确定性。"""
     from sqlalchemy import delete, update
 
-    from app.models import AuditLog, BackupRecord, Category, Shop, Transaction, User
+    from app.models import AuditLog, BackupRecord, Category, Shop, Transaction, User, UserShop
 
     with SessionLocal() as db:
+        db.execute(delete(UserShop))
         db.execute(delete(Transaction))
         db.execute(delete(AuditLog))
         db.execute(delete(BackupRecord))
@@ -43,12 +48,19 @@ def clean_tables():
         # 用户表恢复到种子状态（id 1=admin，2=owner），删除测试中新建的用户
         db.execute(delete(User).where(User.id > 2))
         db.execute(
-            update(User).where(User.id == 1).values(role="admin", status="active", deleted_at=None)
+            update(User).where(User.id == 1)
+            .values(role="admin", status="active", deleted_at=None, password_hash=_SEED_ADMIN_HASH)
         )
         db.execute(
-            update(User).where(User.id == 2).values(role="owner", status="active", deleted_at=None)
+            update(User).where(User.id == 2)
+            .values(role="owner", status="active", deleted_at=None, password_hash=_SEED_OWNER_HASH)
         )
         db.commit()
+
+    # 恢复 V1.2 授权关系：owner 绑定全部店铺（模拟迁移后的默认状态），测试内即可用
+    from app.migrations import bind_owners_to_active_shops
+
+    bind_owners_to_active_shops()
     yield
 
 
@@ -101,3 +113,14 @@ def add_tx(client: TestClient, headers: dict, *, shop_id: int, tx_type: str, cat
     )
     assert resp.status_code == 201, resp.text
     return resp.json()
+
+
+def make_user(client: TestClient, admin_headers: dict, *, username: str, password: str,
+              role: str, shop_ids: list[int] | None = None) -> dict:
+    """创建用户并返回其认证头。"""
+    resp = client.post("/api/users", headers=admin_headers, json={
+        "username": username, "password": password, "role": role,
+        "shop_ids": shop_ids or [],
+    })
+    assert resp.status_code == 201, resp.text
+    return login(client, username, password)

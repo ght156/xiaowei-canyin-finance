@@ -10,15 +10,48 @@ from sqlalchemy.orm import Session
 
 from ..config import BACKUP_DIR, DB_PATH
 from ..database import get_db
-from ..models import AuditLog, BackupRecord, Transaction, User
-from ..schemas import TransactionOut, UserCreate, UserOut, UserUpdate
-from ..security import hash_password, require_admin
+from ..models import AuditLog, BackupRecord, Shop, Transaction, User, UserShop
+from ..schemas import TransactionOut, UserCreate, UserOut, UserShopsUpdate, UserUpdate
+from ..security import get_current_user, hash_password, require_admin
 from ..services.audit import log_action
 from ..services.backup import create_backup, restore_backup
 from ..tz import naive_now
 from ..utils import PAYMENT_LABELS, TYPE_LABELS, cents_to_yuan
 
 router = APIRouter(tags=["system"])
+
+
+def _set_user_shops(db: Session, user: User, shop_ids: list[int], admin: User) -> None:
+    """全量替换用户的店铺授权；记录前后店铺名列表。admin 用户不接受分配。"""
+    if user.role == "admin":
+        raise HTTPException(400, "管理员默认拥有全部店铺权限，无需分配")
+    valid = db.scalars(
+        select(Shop).where(Shop.id.in_(shop_ids), Shop.deleted_at.is_(None))
+    ).all() if shop_ids else []
+    found = {s.id for s in valid}
+    invalid = set(shop_ids) - found
+    if invalid:
+        raise HTTPException(400, f"店铺不存在：{sorted(invalid)}")
+
+    before = [link.shop.name for link in sorted(user.shop_links, key=lambda l: l.shop_id)]
+    # 先物理删除旧绑定再插入，避免同事务内 insert 先于 delete 触发 UNIQUE 冲突
+    db.query(UserShop).filter(UserShop.user_id == user.id).delete(synchronize_session=False)
+    db.flush()
+    for sid in sorted(found):
+        db.add(UserShop(user_id=user.id, shop_id=sid))
+    db.flush()
+    # after 直接由查询到的店铺行生成（ORM 关系此时仍是过期缓存，不能读它）
+    after = [s.name for s in sorted(valid, key=lambda x: x.id)]
+    log_action(db, admin.id, "update_shops", "user", user.id,
+               before={"shops": before}, after={"shops": after})
+
+
+def _bind_all_active_shops(db: Session, user: User) -> None:
+    """角色降为 owner/employee 且没有任何授权时，默认绑定全部未删除店铺，避免账号被锁死。"""
+    if user.shop_links:
+        return
+    for shop in db.scalars(select(Shop).where(Shop.deleted_at.is_(None))).all():
+        db.add(UserShop(user_id=user.id, shop_id=shop.id))
 
 
 # ---------------- 用户管理 ----------------
@@ -51,6 +84,10 @@ def create_user(body: UserCreate, db: Session = Depends(get_db), admin: User = D
     user = User(username=username, password_hash=hash_password(body.password), role=body.role)
     db.add(user)
     db.flush()
+    if user.role != "admin" and body.shop_ids:
+        _set_user_shops(db, user, body.shop_ids, admin)
+    elif user.role in ("owner", "employee"):
+        _bind_all_active_shops(db, user)
     log_action(db, admin.id, "create", "user", user.id, after={"username": username, "role": body.role})
     db.commit()
     db.refresh(user)
@@ -82,10 +119,17 @@ def update_user(user_id: int, body: UserUpdate, db: Session = Depends(get_db), a
 
     if body.password is not None:
         user.password_hash = hash_password(body.password)
+    role_before = user.role
     if body.role is not None:
         user.role = body.role
     if body.status is not None:
         user.status = body.status
+    # 角色变化时同步店铺授权：升为 admin 清空绑定（默认全部）；降为 owner/employee 且无绑定时绑定全部
+    if body.role is not None and body.role != role_before:
+        if body.role == "admin":
+            user.shop_links.clear()
+        else:
+            _bind_all_active_shops(db, user)
     log_action(
         db, admin.id, "update", "user", user.id, before=before,
         after={"role": user.role, "status": user.status, "password_changed": body.password is not None},
@@ -93,6 +137,32 @@ def update_user(user_id: int, body: UserUpdate, db: Session = Depends(get_db), a
     db.commit()
     db.refresh(user)
     return user
+
+
+@router.get("/api/users/{user_id}/shops")
+def get_user_shops(user_id: int, db: Session = Depends(get_db), admin: User = Depends(require_admin)):
+    user = db.get(User, user_id)
+    if user is None or user.deleted_at is not None:
+        raise HTTPException(404, "用户不存在")
+    if user.role == "admin":
+        return {"shop_ids": [], "all": True}
+    return {"shop_ids": [link.shop_id for link in sorted(user.shop_links, key=lambda l: l.shop_id)], "all": False}
+
+
+@router.put("/api/users/{user_id}/shops")
+def update_user_shops(
+    user_id: int,
+    body: UserShopsUpdate,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin),
+):
+    user = db.get(User, user_id)
+    if user is None or user.deleted_at is not None:
+        raise HTTPException(404, "用户不存在")
+    _set_user_shops(db, user, body.shop_ids, admin)
+    db.commit()
+    db.refresh(user)
+    return {"ok": True, "shop_ids": [link.shop_id for link in sorted(user.shop_links, key=lambda l: l.shop_id)]}
 
 
 @router.delete("/api/users/{user_id}")
@@ -161,6 +231,13 @@ def list_audit_logs(
 
 
 # ---------------- 备份 ----------------
+def _require_backup_creator(user: User = Depends(get_current_user)) -> User:
+    """手动备份：admin/owner 可用，employee 无权。"""
+    if user.role == "employee":
+        raise HTTPException(403, "员工账号无权创建备份")
+    return user
+
+
 @router.get("/api/backups")
 def list_backups(db: Session = Depends(get_db), admin: User = Depends(require_admin)):
     records = db.scalars(select(BackupRecord).order_by(BackupRecord.id.desc())).all()
@@ -177,9 +254,9 @@ def list_backups(db: Session = Depends(get_db), admin: User = Depends(require_ad
 
 
 @router.post("/api/backups", status_code=201)
-def create_backup_now(db: Session = Depends(get_db), admin: User = Depends(require_admin)):
+def create_backup_now(db: Session = Depends(get_db), user: User = Depends(_require_backup_creator)):
     record = create_backup(db, backup_type="manual")
-    log_action(db, admin.id, "backup", "backup_record", record.id, after={"file_name": record.file_name})
+    log_action(db, user.id, "backup", "backup_record", record.id, after={"file_name": record.file_name})
     db.commit()
     return {"id": record.id, "file_name": record.file_name, "message": "备份完成"}
 
@@ -214,8 +291,11 @@ def export_csv(
     end: str = Query(..., description="YYYY-MM-DD"),
     shop_id: int | None = None,
     db: Session = Depends(get_db),
-    admin: User = Depends(require_admin),
+    user: User = Depends(get_current_user),
 ):
+    """导出流水 CSV。admin 全部；owner 仅授权店铺；employee 无权。"""
+    if user.role == "employee":
+        raise HTTPException(403, "员工账号无权导出数据")
     try:
         s = datetime.strptime(start, "%Y-%m-%d").date()
         e = datetime.strptime(end, "%Y-%m-%d").date()
@@ -223,6 +303,10 @@ def export_csv(
         raise HTTPException(422, "日期格式应为 YYYY-MM-DD")
     if s > e:
         raise HTTPException(422, "开始日期不能晚于结束日期")
+    if shop_id is not None:
+        from ..permissions import ensure_shop_access
+
+        ensure_shop_access(db, user, shop_id)
 
     q = (
         select(Transaction)
@@ -235,6 +319,12 @@ def export_csv(
     )
     if shop_id is not None:
         q = q.where(Transaction.shop_id == shop_id)
+    else:
+        from ..permissions import shop_ids_or_all
+
+        allowed = shop_ids_or_all(db, user)
+        if allowed is not None:
+            q = q.where(Transaction.shop_id.in_(allowed) if allowed else Transaction.shop_id == -1)
     rows = db.scalars(q).all()
 
     buf = io.StringIO()

@@ -72,10 +72,10 @@
           <van-cell title="记录时间" :value="fmtTime(current.created_at)" />
         </van-cell-group>
 
-        <template v-if="auth.isAdmin && !current.deleted_at">
+        <template v-if="canEditCurrent || canDeleteCurrent">
           <div class="detail-btns">
-            <van-button type="primary" block round @click="startEdit">编 辑</van-button>
-            <van-button type="danger" block round plain @click="onDelete">删 除</van-button>
+            <van-button v-if="canEditCurrent" type="primary" block round @click="startEdit">编 辑</van-button>
+            <van-button v-if="canDeleteCurrent" type="danger" block round plain @click="onDelete">删 除</van-button>
           </div>
         </template>
       </div>
@@ -143,6 +143,20 @@ import {
 
 const auth = useAuthStore()
 const shopStore = useShopStore()
+
+// 操作按钮按角色显隐（后端仍强制校验）：
+// admin/owner 可编辑与删除；员工只能改自己 10 分钟内录入的流水，不能删除
+const canEditCurrent = computed(() => {
+  if (!current.value || current.value.deleted_at) return false
+  if (auth.isAdmin || auth.isOwner) return true
+  if (!auth.isEmployee) return false
+  return current.value.created_by === auth.user?.id &&
+    dayjs().diff(dayjs(current.value.created_at), 'minute') < 10
+})
+const canDeleteCurrent = computed(() => {
+  if (!current.value || current.value.deleted_at) return false
+  return auth.isAdmin || auth.isOwner
+})
 
 const items = ref([])
 const loading = ref(false)

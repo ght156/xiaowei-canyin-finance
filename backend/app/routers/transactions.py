@@ -1,27 +1,41 @@
-"""收支流水：新增（所有用户）、查询、管理员编辑/软删除/恢复，全部写审计。"""
+"""收支流水：新增（授权店铺内）、查询、编辑/软删除/恢复按角色分层，全部写审计。
+
+- admin：全部流水
+- owner：授权店铺的全部流水（可改/删/恢复）
+- employee：授权店铺内记流水；看当天店铺流水与自己录的流水；
+  只能在 10 分钟内修改自己录的流水；不能删除/恢复
+"""
 from datetime import date as _date_type
 from datetime import datetime, timedelta
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from ..database import get_db
 from ..models import Category, Shop, Transaction, User
+from ..permissions import authorized_shop_ids, ensure_shop_access
 from ..schemas import (
     PagedTransactions,
     TransactionCreate,
     TransactionOut,
     TransactionUpdate,
 )
-from ..security import get_current_user, require_admin
+from ..security import get_current_user
 from ..services.audit import log_action
 from ..services.backup import maybe_auto_backup
-from ..tz import naive_now
+from ..tz import naive_now, today_cn
 from ..utils import AmountError, cents_to_yuan, parse_amount_to_cents
 
 router = APIRouter(prefix="/api/transactions", tags=["transactions"])
+
+EMPLOYEE_EDIT_WINDOW = timedelta(minutes=10)
+
+
+def _require_shop_write(db: Session, user: User, shop_id: int) -> None:
+    """新增流水的店铺授权校验（admin 不限）。"""
+    ensure_shop_access(db, user, shop_id)
 
 
 def serialize_tx(tx: Transaction) -> dict:
@@ -81,6 +95,7 @@ def create_transaction(
 ):
     cents = _parse_amount_or_422(body.amount)
     _validate_refs(db, body.shop_id, body.type, body.category_id)
+    _require_shop_write(db, user, body.shop_id)
 
     duplicate = _detect_duplicate(db, user.id, body, cents)
 
@@ -144,16 +159,33 @@ def list_transactions(
 ):
     q = select(Transaction)
     if deleted_only in ("1", "true"):
-        # 回收站：只看已删除的流水（仅管理员）
-        if user.role != "admin":
-            raise HTTPException(403, "仅管理员可查看回收站")
+        # 回收站：只看已删除的流水（admin/owner；owner 限授权店铺）
+        if user.role == "employee":
+            raise HTTPException(403, "员工账号无权查看回收站")
         q = q.where(Transaction.deleted_at.is_not(None))
     elif include_deleted in ("1", "true"):
-        # 管理员混合视图：正常 + 已删除（列表中标记"已删除"）
-        if user.role != "admin":
-            raise HTTPException(403, "仅管理员可查看回收站")
+        # 混合视图：正常 + 已删除（列表中标记"已删除"）
+        if user.role == "employee":
+            raise HTTPException(403, "员工账号无权查看回收站")
     else:
         q = q.where(Transaction.deleted_at.is_(None))
+
+    # 店铺范围：owner/employee 仅授权店铺；越权查询指定店铺直接 403
+    allowed = authorized_shop_ids(db, user)
+    if allowed is not None:
+        if shop_id is not None:
+            ensure_shop_access(db, user, shop_id)
+        if not allowed:
+            return PagedTransactions(total=0, page=page, page_size=page_size, items=[])
+        q = q.where(Transaction.shop_id.in_(allowed))
+        if user.role == "employee":
+            # 员工：授权店铺的当天流水 + 自己录入的全部流水
+            q = q.where(
+                or_(
+                    Transaction.biz_date == today_cn(),
+                    Transaction.created_by == user.id,
+                )
+            )
 
     if shop_id is not None:
         q = q.where(Transaction.shop_id == shop_id)
@@ -199,7 +231,36 @@ def get_transaction(
         raise HTTPException(404, "这笔流水不存在或已被删除，请刷新流水列表")
     if tx.deleted_at is not None and user.role != "admin":
         raise HTTPException(404, "这笔流水不存在或已被删除，请刷新流水列表")
+    # 店铺范围可见性
+    if user.role != "admin":
+        ensure_shop_access(db, user, tx.shop_id)
+    if user.role == "employee":
+        today = today_cn()
+        if tx.biz_date != today and tx.created_by != user.id:
+            raise HTTPException(403, "员工只能查看当天店铺流水或自己录入的流水")
     return serialize_tx(tx)
+
+
+def _can_edit(db: Session, user: User, tx: Transaction) -> None:
+    """编辑权限：admin 全部；owner 授权店铺；employee 仅自己的 10 分钟内流水。"""
+    if user.role == "admin":
+        return
+    ensure_shop_access(db, user, tx.shop_id)
+    if user.role == "owner":
+        return
+    # employee
+    if tx.created_by != user.id:
+        raise HTTPException(403, "员工只能修改自己录入的流水")
+    if naive_now() - tx.created_at > EMPLOYEE_EDIT_WINDOW:
+        raise HTTPException(403, "该流水已超过可自行修改时间，请联系店主修改。")
+
+
+def _can_delete(db: Session, user: User, tx: Transaction) -> None:
+    """删除/恢复权限：admin 全部；owner 授权店铺；employee 无权。"""
+    if user.role == "employee":
+        raise HTTPException(403, "员工账号无权删除或恢复流水，请联系店主处理。")
+    if user.role != "admin":
+        ensure_shop_access(db, user, tx.shop_id)
 
 
 @router.put("/{tx_id}", response_model=TransactionOut)
@@ -207,9 +268,10 @@ def update_transaction(
     tx_id: int,
     body: TransactionUpdate,
     db: Session = Depends(get_db),
-    admin: User = Depends(require_admin),
+    user: User = Depends(get_current_user),
 ):
     tx = _get_live_tx(db, tx_id)
+    _can_edit(db, user, tx)
     before = serialize_tx(tx)
 
     if body.category_id is not None:
@@ -229,7 +291,7 @@ def update_transaction(
     if body.remark is not None:
         tx.remark = body.remark.strip() or None
 
-    log_action(db, admin.id, "update", "transaction", tx.id, before=before, after=serialize_tx(tx))
+    log_action(db, user.id, "update", "transaction", tx.id, before=before, after=serialize_tx(tx))
     db.commit()
     db.refresh(tx)
     return serialize_tx(tx)
@@ -239,13 +301,14 @@ def update_transaction(
 def delete_transaction(
     tx_id: int,
     db: Session = Depends(get_db),
-    admin: User = Depends(require_admin),
+    user: User = Depends(get_current_user),
 ):
     """软删除：仅标记 deleted_at，可在回收站恢复。"""
     tx = _get_live_tx(db, tx_id)
+    _can_delete(db, user, tx)
     before = serialize_tx(tx)
     tx.deleted_at = naive_now()
-    log_action(db, admin.id, "soft_delete", "transaction", tx.id, before=before)
+    log_action(db, user.id, "soft_delete", "transaction", tx.id, before=before)
     db.commit()
     return {"ok": True, "message": "已移入回收站"}
 
@@ -254,13 +317,14 @@ def delete_transaction(
 def restore_transaction(
     tx_id: int,
     db: Session = Depends(get_db),
-    admin: User = Depends(require_admin),
+    user: User = Depends(get_current_user),
 ):
     tx = db.get(Transaction, tx_id)
     if tx is None or tx.deleted_at is None:
         raise HTTPException(404, "流水不在回收站中")
+    _can_delete(db, user, tx)
     tx.deleted_at = None
-    log_action(db, admin.id, "restore", "transaction", tx.id, after=serialize_tx(tx))
+    log_action(db, user.id, "restore", "transaction", tx.id, after=serialize_tx(tx))
     db.commit()
     db.refresh(tx)
     return serialize_tx(tx)

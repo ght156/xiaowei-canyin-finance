@@ -12,6 +12,11 @@ export const PAYMENTS = [
 
 export const paymentLabel = (v) => PAYMENTS.find((p) => p.value === v)?.label || v
 export const typeLabel = (v) => (v === 'income' ? '收入' : '支出')
+
+/** 角色中文名（任何界面都不直接显示英文角色名） */
+export const ROLE_LABELS = { admin: '管理员', owner: '店主', employee: '员工' }
+export const roleLabel = (v) => ROLE_LABELS[v] || v
+
 export const today = () => dayjs().format('YYYY-MM-DD')
 
 /** 大额确认阈值（元）：超过需二次确认 */

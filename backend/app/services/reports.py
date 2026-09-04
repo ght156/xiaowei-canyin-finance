@@ -8,7 +8,7 @@ from ..models import Shop, Transaction
 from ..utils import cents_to_yuan, profit_rate
 
 
-def _base_query(db: Session, start: date, end: date, shop_id: int | None):
+def _base_query(db: Session, start: date, end: date, shop_id: int | None, shop_ids: list[int] | None = None):
     q = db.query(
         Transaction.type,
         Transaction.shop_id,
@@ -20,14 +20,20 @@ def _base_query(db: Session, start: date, end: date, shop_id: int | None):
     )
     if shop_id is not None:
         q = q.filter(Transaction.shop_id == shop_id)
+    if shop_ids is not None:
+        q = q.filter(Transaction.shop_id.in_(shop_ids) if shop_ids else Transaction.shop_id == -1)
     return q
 
 
 def summarize(
-    db: Session, start: date, end: date, shop_id: int | None = None
+    db: Session, start: date, end: date, shop_id: int | None = None,
+    shop_ids: list[int] | None = None,
 ) -> dict:
-    """区间汇总：总收入、总支出、利润、利润率、分店铺明细、营业天数与日均。"""
-    rows = _base_query(db, start, end, shop_id).group_by(Transaction.type, Transaction.shop_id).all()
+    """区间汇总：总收入、总支出、利润、利润率、分店铺明细、营业天数与日均。
+
+    shop_ids：限定店铺范围（owner 的授权店铺）；None 表示全部。
+    """
+    rows = _base_query(db, start, end, shop_id, shop_ids).group_by(Transaction.type, Transaction.shop_id).all()
 
     # 营业日：当天存在至少一笔收入或支出流水
     days_q = db.query(func.count(func.distinct(Transaction.biz_date))).filter(
@@ -37,6 +43,8 @@ def summarize(
     )
     if shop_id is not None:
         days_q = days_q.filter(Transaction.shop_id == shop_id)
+    if shop_ids is not None:
+        days_q = days_q.filter(Transaction.shop_id.in_(shop_ids) if shop_ids else Transaction.shop_id == -1)
     business_days = int(days_q.scalar() or 0)
 
     income = 0
@@ -86,7 +94,8 @@ def summarize(
     }
 
 
-def expense_by_category(db: Session, start: date, end: date, shop_id: int | None = None) -> list[dict]:
+def expense_by_category(db: Session, start: date, end: date, shop_id: int | None = None,
+                        shop_ids: list[int] | None = None) -> list[dict]:
     """区间内支出分类构成（含百分比），按金额降序。"""
     from ..models import Category
 
@@ -101,6 +110,8 @@ def expense_by_category(db: Session, start: date, end: date, shop_id: int | None
     )
     if shop_id is not None:
         q = q.filter(Transaction.shop_id == shop_id)
+    if shop_ids is not None:
+        q = q.filter(Transaction.shop_id.in_(shop_ids) if shop_ids else Transaction.shop_id == -1)
     rows = q.group_by(Transaction.category_id).all()
 
     names = {
@@ -128,7 +139,8 @@ def expense_by_category(db: Session, start: date, end: date, shop_id: int | None
     return result
 
 
-def daily_trend(db: Session, start: date, end: date, shop_id: int | None = None) -> list[dict]:
+def daily_trend(db: Session, start: date, end: date, shop_id: int | None = None,
+                shop_ids: list[int] | None = None) -> list[dict]:
     """逐日收入/支出/利润（含无流水的日期，补 0）。"""
     q = db.query(
         Transaction.biz_date,
@@ -141,6 +153,8 @@ def daily_trend(db: Session, start: date, end: date, shop_id: int | None = None)
     )
     if shop_id is not None:
         q = q.filter(Transaction.shop_id == shop_id)
+    if shop_ids is not None:
+        q = q.filter(Transaction.shop_id.in_(shop_ids) if shop_ids else Transaction.shop_id == -1)
     rows = q.group_by(Transaction.biz_date, Transaction.type).all()
 
     data: dict[date, dict[str, int]] = {

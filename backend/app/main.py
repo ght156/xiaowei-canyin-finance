@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .config import APP_NAME, CORS_ORIGINS
 from .database import Base, SessionLocal, engine
-from .migrations import ensure_schema_upgrades
+from .migrations import bind_owners_to_active_shops, ensure_schema_upgrades
 from .routers import auth, categories, reports, shops, system, transactions
 from .services.backup import maybe_auto_backup
 
@@ -16,6 +16,7 @@ from .services.backup import maybe_auto_backup
 async def lifespan(_app: FastAPI):
     Base.metadata.create_all(engine)
     ensure_schema_upgrades()  # 旧库补齐新增列，升级不丢数据
+    bind_owners_to_active_shops()  # V1.2：存量 owner 自动绑定全部店铺
     # 每天首次启动自动备份一次
     with SessionLocal() as db:
         maybe_auto_backup(db)

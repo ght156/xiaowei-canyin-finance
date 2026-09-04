@@ -23,10 +23,31 @@ class User(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     username: Mapped[str] = mapped_column(String(50), unique=True)
     password_hash: Mapped[str] = mapped_column(String(100))
-    role: Mapped[str] = mapped_column(String(20), default="owner")  # admin=管理员 / owner=店主
+    role: Mapped[str] = mapped_column(String(20), default="owner")  # admin / owner / employee
     status: Mapped[str] = mapped_column(String(20), default="active")  # active / disabled
     created_at: Mapped[datetime] = mapped_column(DateTime, default=naive_now)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)  # 软删除
+
+    shop_links: Mapped[list["UserShop"]] = relationship(back_populates="user", cascade="all, delete-orphan")
+
+    @property
+    def shop_ids(self) -> list[int]:
+        """授权店铺 id 列表（admin 为空 = 默认全部）。"""
+        return [link.shop_id for link in self.shop_links]
+
+
+class UserShop(Base):
+    """用户-店铺授权关系：owner/employee 只能访问被授权的店铺；admin 默认全部。"""
+    __tablename__ = "user_shops"
+    __table_args__ = (UniqueConstraint("user_id", "shop_id", name="uq_user_shop"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    shop_id: Mapped[int] = mapped_column(ForeignKey("shops.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=naive_now)
+
+    user: Mapped["User"] = relationship(back_populates="shop_links")
+    shop: Mapped["Shop"] = relationship()
 
 
 class Shop(Base):
@@ -37,6 +58,8 @@ class Shop(Base):
     status: Mapped[str] = mapped_column(String(20), default="active")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=naive_now)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)  # 软删除
+
+    user_links: Mapped[list["UserShop"]] = relationship(back_populates="shop")
 
 
 class Category(Base):

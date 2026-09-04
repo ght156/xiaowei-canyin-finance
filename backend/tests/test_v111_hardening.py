@@ -13,7 +13,7 @@ import pytest
 from app.config import BACKUP_DIR
 from app.services import backup as backup_svc
 
-from tests.conftest import add_tx, login
+from tests.conftest import add_tx, make_user, login
 
 
 # ---------------- 备份文件名与保留策略 ----------------
@@ -28,8 +28,7 @@ def test_same_second_backups_have_unique_names(client, admin_headers):
 
 def test_prune_quota_per_backup_type(client, admin_headers, monkeypatch):
     """手动备份再多，也不挤占 auto / pre_restore 各自的保留配额。"""
-    monkeypatch.setattr(backup_svc, "BACKUP_KEEP", 2)
-    monkeypatch.setattr(backup_svc, "PRE_RESTORE_KEEP", 1)
+    monkeypatch.setattr(backup_svc, "_TYPE_QUOTAS", {"auto": 2, "manual": 2, "pre_restore": 1})
     for _ in range(4):
         client.post("/api/backups", headers=admin_headers)
     records = client.get("/api/backups", headers=admin_headers).json()
@@ -78,8 +77,11 @@ def test_deleted_only_returns_only_deleted(client, admin_headers, owner_headers,
     assert normal["total"] == 1
     assert normal["items"][0]["id"] == keep["id"]
 
-    # 店主无权查看回收站
-    assert client.get("/api/transactions?deleted_only=1", headers=owner_headers).status_code == 403
+    # V1.2：owner 可看授权店铺回收站；employee 不可
+    assert client.get("/api/transactions?deleted_only=1", headers=owner_headers).status_code == 200
+    emp = make_user(client, admin_headers, username="emp_recycle", password="emp12345",
+                    role="employee", shop_ids=[ids["zaocan"]])
+    assert client.get("/api/transactions?deleted_only=1", headers=emp).status_code == 403
 
 
 # ---------------- 非法参数 422 ----------------

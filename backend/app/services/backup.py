@@ -20,6 +20,10 @@ REQUIRED_TABLES = {"users", "shops", "categories", "transactions", "audit_logs",
 
 PRE_RESTORE_KEEP = 5  # 安全备份单独保留最近 5 份
 
+# 各类型保留份数与文件名前缀
+_TYPE_QUOTAS = {"auto": BACKUP_KEEP, "manual": 10, "pre_restore": PRE_RESTORE_KEEP}
+_TYPE_PREFIX = {"auto": "backup_auto", "manual": "backup_manual", "pre_restore": "pre_restore"}
+
 
 def _valid_backup_name(file_name: str) -> bool:
     return bool(file_name) and "/" not in file_name and "\\" not in file_name and ".." not in file_name
@@ -65,9 +69,9 @@ def _validate_restorable(path: Path) -> None:
 
 def create_backup(db: Session, backup_type: str = "manual") -> BackupRecord:
     BACKUP_DIR.mkdir(parents=True, exist_ok=True)
-    # 文件名带微秒：避免同一秒内自动备份+手动备份同名互相覆盖
+    # 文件名带类型与微秒：backup_auto_20260905_083012_234881.db，同秒多次备份不冲突
     ts = naive_now().strftime("%Y%m%d_%H%M%S_%f")
-    prefix = "pre_restore" if backup_type == "pre_restore" else "backup"
+    prefix = _TYPE_PREFIX.get(backup_type, "backup_manual")
     dest = BACKUP_DIR / f"{prefix}_{ts}.db"
 
     src = sqlite3.connect(str(DB_PATH))
@@ -89,10 +93,9 @@ def create_backup(db: Session, backup_type: str = "manual") -> BackupRecord:
 
 
 def _prune_old_backups(db: Session) -> None:
-    """按备份类型分别保留：auto/manual 各 BACKUP_KEEP 份，pre_restore 单独 PRE_RESTORE_KEEP 份。
-    手动备份与恢复前安全备份不会挤占每日自动备份的配额。"""
-    quotas = {"auto": BACKUP_KEEP, "manual": BACKUP_KEEP, "pre_restore": PRE_RESTORE_KEEP}
-    for btype, keep in quotas.items():
+    """按备份类型分别保留（auto 30 / manual 10 / pre_restore 5），
+    删除记录的同时删除对应文件，各类型互不挤占。"""
+    for btype, keep in _TYPE_QUOTAS.items():
         records = db.scalars(
             select(BackupRecord)
             .where(BackupRecord.backup_type == btype)
