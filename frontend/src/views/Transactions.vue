@@ -335,6 +335,15 @@ async function saveEdit() {
     showEdit.value = false
     showDetail.value = false
     showDialog({ message: '修改成功，已记录审计日志' })
+  } catch (err) {
+    // 流水已在别处被删除：从本地列表移除并刷新，避免一直点一条"幽灵流水"
+    if (err?.response?.status === 404) {
+      showToast('这笔流水已被删除，列表已刷新')
+      items.value = items.value.filter((t) => t.id !== editForm.value.id)
+      showEdit.value = false
+      showDetail.value = false
+      reload()
+    }
   } finally {
     saving.value = false
   }
@@ -361,7 +370,8 @@ onActivated(async () => {
   if (!cats.value.length) {
     cats.value = await api.get('/categories?include_disabled=1').then((r) => r.data)
   }
-  if (!items.value.length) reload()
+  // 每次回到流水页都刷新：别处删除/恢复过流水后，本地列表不能停留在旧数据
+  reload()
 })
 </script>
 

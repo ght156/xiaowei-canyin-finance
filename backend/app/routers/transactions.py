@@ -69,7 +69,7 @@ def _parse_amount_or_422(amount: str) -> int:
 def _get_live_tx(db: Session, tx_id: int) -> Transaction:
     tx = db.get(Transaction, tx_id)
     if tx is None or tx.deleted_at is not None:
-        raise HTTPException(404, "流水不存在")
+        raise HTTPException(404, "这笔流水不存在或已被删除，请刷新流水列表")
     return tx
 
 
@@ -196,9 +196,9 @@ def get_transaction(
 ):
     tx = db.get(Transaction, tx_id)
     if tx is None:
-        raise HTTPException(404, "流水不存在")
+        raise HTTPException(404, "这笔流水不存在或已被删除，请刷新流水列表")
     if tx.deleted_at is not None and user.role != "admin":
-        raise HTTPException(404, "流水不存在")
+        raise HTTPException(404, "这笔流水不存在或已被删除，请刷新流水列表")
     return serialize_tx(tx)
 
 

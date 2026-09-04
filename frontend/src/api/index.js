@@ -15,7 +15,7 @@ function humanizeError(err) {
   const status = err.response?.status
   if (status === 401) return '登录已失效，请重新登录'
   if (status === 403) return err.response?.data?.detail || '没有权限执行此操作'
-  if (status === 404) return '要查看的内容不存在或已被删除'
+  if (status === 404) return err.response?.data?.detail || '要查看的内容不存在或已被删除'
   if (status === 422) {
     const detail = err.response?.data?.detail
     if (typeof detail === 'string') return detail
