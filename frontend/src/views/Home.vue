@@ -92,8 +92,8 @@ async function loadOverview() {
   yesterdayLoaded.value = true
 }
 
-function onShopConfirm({ selectedValue }) {
-  shopStore.setCurrent(selectedValue)
+function onShopConfirm({ selectedValues }) {
+  shopStore.setCurrent(selectedValues[0])
   showShopPicker.value = false
   loadOverview()
 }

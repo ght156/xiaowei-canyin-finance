@@ -110,8 +110,8 @@ const entryShopName = computed(
   () => shopStore.list.find((s) => s.id === form.shop_id)?.name || '请选择'
 )
 
-function onShopConfirm({ selectedValue }) {
-  form.shop_id = selectedValue
+function onShopConfirm({ selectedValues }) {
+  form.shop_id = selectedValues[0]
   showShopPicker.value = false
 }
 

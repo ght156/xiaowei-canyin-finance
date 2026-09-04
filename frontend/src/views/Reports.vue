@@ -155,8 +155,8 @@ const shopColumns = computed(() => [
   ...shopStore.list.map((s) => ({ text: s.name, value: s.id }))
 ])
 
-function onShopConfirm({ selectedValue }) {
-  shopStore.setCurrent(selectedValue)
+function onShopConfirm({ selectedValues }) {
+  shopStore.setCurrent(selectedValues[0])
   showShopPicker.value = false
   loadAll()
 }

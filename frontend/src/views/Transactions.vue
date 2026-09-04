@@ -102,7 +102,7 @@
       <van-picker
         :columns="editCategoryOptions"
         title="选择分类（仅启用中的分类）"
-        @confirm="(v) => { editForm.category_id = v.selectedValue; showEditCat = false }"
+        @confirm="(v) => { editForm.category_id = v.selectedValues[0]; showEditCat = false }"
         @cancel="showEditCat = false"
       />
     </van-popup>
@@ -110,7 +110,7 @@
       <van-picker
         :columns="PAYMENTS.map(p => ({ text: p.label, value: p.value }))"
         title="支付方式"
-        @confirm="(v) => { editForm.payment_method = v.selectedValue; showEditPay = false }"
+        @confirm="(v) => { editForm.payment_method = v.selectedValues[0]; showEditPay = false }"
         @cancel="showEditPay = false"
       />
     </van-popup>
