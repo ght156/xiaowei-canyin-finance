@@ -13,7 +13,6 @@
         <div class="emp-income">{{ formatMoney(emp.income ?? '0.00') }}</div>
         <div class="emp-sub">
           今日已记 <b>{{ emp.count ?? 0 }}</b> 笔
-          <template v-if="emp.expense"> · 今日支出 {{ formatMoney(emp.expense) }}</template>
         </div>
       </div>
     </template>

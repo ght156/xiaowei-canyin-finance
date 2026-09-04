@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import func, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
 
 from ..database import get_db
@@ -179,11 +179,15 @@ def list_transactions(
             return PagedTransactions(total=0, page=page, page_size=page_size, items=[])
         q = q.where(Transaction.shop_id.in_(allowed))
         if user.role == "employee":
-            # 员工：授权店铺的当天流水 + 自己录入的全部流水
+            # 员工：自己录入的全部流水 + 授权店铺当天的收入流水
+            # （不暴露老板当天录入的工资、房租、采购等支出）
             q = q.where(
                 or_(
-                    Transaction.biz_date == today_cn(),
                     Transaction.created_by == user.id,
+                    and_(
+                        Transaction.biz_date == today_cn(),
+                        Transaction.type == "income",
+                    ),
                 )
             )
 
@@ -236,8 +240,8 @@ def get_transaction(
         ensure_shop_access(db, user, tx.shop_id)
     if user.role == "employee":
         today = today_cn()
-        if tx.biz_date != today and tx.created_by != user.id:
-            raise HTTPException(403, "员工只能查看当天店铺流水或自己录入的流水")
+        if tx.created_by != user.id and not (tx.biz_date == today and tx.type == "income"):
+            raise HTTPException(403, "员工只能查看自己录入的流水与当天店铺收入")
     return serialize_tx(tx)
 
 

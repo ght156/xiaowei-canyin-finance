@@ -103,9 +103,10 @@ def update_user(user_id: int, body: UserUpdate, db: Session = Depends(get_db), a
     if user.id == admin.id and body.status == "disabled":
         raise HTTPException(400, "不能停用自己的账号")
 
-    # 保护系统最后一个启用中的管理员：降级或停用前必须还有其他 active admin
+    # 保护系统最后一个启用中的管理员：任何使其失去 active admin 身份的变更
+    # （改成 owner、改成 employee、停用）都必须先确认还有其他 active admin
     if user.role == "admin" and user.status == "active":
-        loses_admin = (body.role == "owner") or (body.status == "disabled")
+        loses_admin = (body.role is not None and body.role != "admin") or (body.status == "disabled")
         if loses_admin:
             others = db.scalar(
                 select(func.count(User.id)).where(

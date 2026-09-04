@@ -118,7 +118,7 @@
 
     <div class="block">
       <van-button block round type="danger" plain @click="logout">退出登录</van-button>
-      <div class="ver">小微餐饮财务管理系统 v1.2</div>
+      <div class="ver">小微餐饮财务管理系统 v1.2.1</div>
     </div>
 
     <!-- 新增用户 -->
@@ -446,7 +446,7 @@ async function backupNow() {
   try {
     await showConfirmDialog({ title: '确认备份', message: '将立即创建一份数据库备份，继续吗？' })
     const { data } = await api.post('/backups')
-    showToast('备份完成')
+    showToast('数据已安全备份。')
     backups.value = [data, ...backups.value]
   } catch { /* 取消 */ }
 }

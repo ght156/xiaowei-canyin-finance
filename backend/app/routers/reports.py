@@ -186,7 +186,7 @@ def employee_summary(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    """员工首页数据：当前店铺今日营业额、笔数、支出。不返回利润。"""
+    """员工首页数据：当前店铺今日营业额与笔数。不返回利润、支出等经营敏感数据。"""
     if user.role != "employee":
         raise HTTPException(403, "该接口仅面向员工账号")
 
@@ -202,30 +202,19 @@ def employee_summary(
     shop = db.get(Shop, target)
     today = today_cn()
     rows = db.query(
-        Transaction.type,
         func.count(Transaction.id).label("cnt"),
         func.sum(Transaction.amount_cents).label("total"),
     ).filter(
         Transaction.deleted_at.is_(None),
         Transaction.shop_id == target,
         Transaction.biz_date == today,
-    ).group_by(Transaction.type).all()
-
-    income = 0
-    expense = 0
-    count = 0
-    for tx_type, cnt, total in rows:
-        count += int(cnt or 0)
-        if tx_type == "income":
-            income += int(total or 0)
-        else:
-            expense += int(total or 0)
+        Transaction.type == "income",
+    ).one()
 
     return {
         "shop_id": target,
         "shop_name": shop.name if shop else f"店铺{target}",
         "date": today,
-        "income": cents_to_yuan(income),
-        "expense": cents_to_yuan(expense),
-        "count": count,
+        "income": cents_to_yuan(int(rows.total or 0)),
+        "count": int(rows.cnt or 0),
     }
