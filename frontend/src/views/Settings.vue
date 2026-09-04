@@ -99,15 +99,16 @@
 
     <div class="block">
       <van-button block round type="danger" plain @click="logout">退出登录</van-button>
-      <div class="ver">小微餐饮财务管理系统 v1.0</div>
+      <div class="ver">小微餐饮财务管理系统 v1.1</div>
     </div>
 
     <!-- 备份列表 -->
     <van-popup v-model:show="showBackups" round position="bottom" :style="{ minHeight: '40%' }">
       <van-nav-bar title="备份记录" />
       <van-cell v-for="b in backups" :key="b.id" :title="b.file_name"
-        :label="`${fmtTime(b.created_at)} · ${b.backup_type === 'auto' ? '自动' : '手动'}`">
+        :label="`${fmtTime(b.created_at)} · ${backupTypeLabel(b.backup_type)}`">
         <template #value>
+          <van-button size="mini" plain @click="downloadBackup(b)">下载</van-button>
           <van-button size="mini" type="warning" plain @click="restoreBackup(b)">恢复</van-button>
         </template>
       </van-cell>
@@ -117,7 +118,7 @@
     <!-- 回收站 -->
     <van-popup v-model:show="showRecycle" round position="bottom" :style="{ minHeight: '50%' }">
       <van-nav-bar title="回收站（已删除流水）" />
-      <van-cell v-for="t in recycle" :key="t.id" :title="`${t.category_name} ¥${t.amount}`"
+      <van-cell v-for="t in recycle" :key="t.id" :title="`${t.category_name} ${formatMoney(t.amount)}`"
         :label="`${t.biz_date} · ${t.shop_name} · 删除于 ${fmtTime(t.deleted_at)}`">
         <template #value>
           <van-button size="mini" type="primary" @click="restoreTx(t)">恢复</van-button>
@@ -156,7 +157,7 @@ import { showConfirmDialog, showDialog, showToast } from 'vant'
 import api from '../api'
 import { useAuthStore } from '../stores/auth'
 import { inputDialog } from '../utils/inputDialog'
-import { dayjs } from '../utils/format'
+import { dayjs, formatMoney } from '../utils/format'
 
 const auth = useAuthStore()
 const router = useRouter()
@@ -300,13 +301,29 @@ async function restoreBackup(b) {
   try {
     await showConfirmDialog({
       title: '⚠️ 高危操作',
-      message: `将用备份「${b.file_name}」覆盖当前全部数据，此操作不可撤销！确定继续吗？`,
+      message: `恢复备份会将系统恢复到指定时间点，此后的数据可能丢失！\n（恢复前会自动创建一份安全备份）\n确定用「${b.file_name}」恢复吗？`,
       confirmButtonText: '仍然恢复',
       confirmButtonColor: '#ee0a24'
     })
     await api.post(`/backups/${b.file_name}/restore`)
-    showDialog({ message: '恢复完成，请重启后端服务后刷新页面。' })
+    showDialog({ message: '恢复完成，系统已切回备份时间点的数据，页面即将刷新。' })
+    setTimeout(() => window.location.reload(), 1600)
   } catch { /* 取消 */ }
+}
+
+function backupTypeLabel(t) {
+  return { auto: '自动', manual: '手动', pre_restore: '恢复前安全备份' }[t] || t
+}
+
+async function downloadBackup(b) {
+  const resp = await api.get(`/backups/${b.file_name}/download`, { responseType: 'blob' })
+  const url = URL.createObjectURL(resp.data)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = b.file_name
+  a.click()
+  URL.revokeObjectURL(url)
+  showToast('已开始下载，建议保存到电脑或网盘留存')
 }
 
 // ---------- 回收站 ----------

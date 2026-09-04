@@ -122,6 +122,8 @@ class TransactionOut(BaseModel):
     created_at: datetime
     updated_at: datetime
     deleted_at: Optional[datetime]
+    # 仅新增接口使用：30 秒内存在同店铺/同类型/同分类/同金额/同日期的流水时提示可能重复
+    duplicate_warning: bool = False
 
 
 class PagedTransactions(BaseModel):
@@ -148,6 +150,10 @@ class ReportSummary(BaseModel):
     profit: str
     profit_rate: Optional[str]  # 收入为 0 时为 null（前端显示 —）
     by_shop: list[ShopSummary]
+    # 营业日 = 当天存在至少一笔收入或支出流水
+    business_days: int = 0
+    avg_daily_income: Optional[str] = None
+    avg_daily_profit: Optional[str] = None
 
 
 class DailyPoint(BaseModel):
@@ -166,6 +172,7 @@ class PeriodSummary(BaseModel):
 
 class OverviewResponse(BaseModel):
     today: PeriodSummary
+    yesterday: PeriodSummary
     month: PeriodSummary
     trend: list[DailyPoint]  # 最近 7 天（含今天）
     shop_id: Optional[int]

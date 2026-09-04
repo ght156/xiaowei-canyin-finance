@@ -4,7 +4,7 @@
 
     <van-dropdown-menu>
       <van-dropdown-item v-model="filters.shop_id" :options="shopOptions" @change="reload" />
-      <van-dropdown-item v-model="filters.type" :options="typeOptions" @change="reload" />
+      <van-dropdown-item v-model="filters.type" :options="typeOptions" @change="onTypeChange" />
       <van-dropdown-item v-model="filters.category_id" :options="categoryOptions" @change="reload" />
       <van-dropdown-item v-model="filters.range" :options="rangeOptions" @change="onRangeChange" />
     </van-dropdown-menu>
@@ -27,7 +27,13 @@
       class="tx-list"
     >
       <template v-for="group in groups" :key="group.date">
-        <div class="date-head">{{ group.date }}<span class="date-sum">{{ group.dateSum }}</span></div>
+        <div class="date-head">
+          <span>{{ group.title }}</span>
+          <span class="date-sum">
+            收入 <b class="amount-income">{{ formatMoney(group.incomeCents) }}</b>
+            · 支出 <b class="amount-expense">{{ formatMoney(group.expenseCents) }}</b>
+          </span>
+        </div>
         <van-cell
           v-for="tx in group.items"
           :key="tx.id"
@@ -40,7 +46,7 @@
           </template>
           <template #value>
             <span :class="tx.type === 'income' ? 'amount-income' : 'amount-expense'">
-              {{ tx.type === 'income' ? '+' : '-' }}{{ tx.amount }}
+              {{ tx.type === 'income' ? '+' : '-' }}{{ formatMoney(tx.amount) }}
             </span>
           </template>
           <template #label>
@@ -56,7 +62,7 @@
       <div v-if="current" class="detail">
         <van-nav-bar :title="typeLabel(current.type) + '详情'" />
         <van-cell-group inset>
-          <van-cell title="金额" :value="'¥' + current.amount" />
+          <van-cell title="金额" :value="formatMoney(current.amount)" />
           <van-cell title="分类" :value="current.category_name" />
           <van-cell title="店铺" :value="current.shop_name" />
           <van-cell title="支付方式" :value="paymentLabel(current.payment_method)" />
@@ -95,7 +101,7 @@
     <van-popup v-model:show="showEditCat" round position="bottom">
       <van-picker
         :columns="editCategoryOptions"
-        title="选择分类"
+        title="选择分类（仅启用中的分类）"
         @confirm="(v) => { editForm.category_id = v.selectedValue; showEditCat = false }"
         @cancel="showEditCat = false"
       />
@@ -127,7 +133,9 @@ import { showConfirmDialog, showDialog, showToast } from 'vant'
 import api from '../api'
 import { useAuthStore } from '../stores/auth'
 import { useShopStore } from '../stores/shops'
-import { PAYMENTS, dayjs, paymentLabel, typeLabel } from '../utils/format'
+import {
+  PAYMENTS, dayjs, formatDateCN, formatMoney, paymentLabel, typeLabel, yuanToCents
+} from '../utils/format'
 
 const auth = useAuthStore()
 const shopStore = useShopStore()
@@ -204,6 +212,15 @@ function onRangeChange(v) {
   applyRange()
   reload()
 }
+
+/** 类型切换后必须清空旧分类筛选，避免"收入 × 支出分类"这种空结果组合 */
+function onTypeChange() {
+  if (filters.category_id) {
+    filters.category_id = 0
+  }
+  reload()
+}
+
 function onCustomRange([s, e]) {
   filters.start = dayjs(s).format('YYYY-MM-DD')
   filters.end = dayjs(e).format('YYYY-MM-DD')
@@ -211,16 +228,16 @@ function onCustomRange([s, e]) {
   reload()
 }
 
+/** 按日分组；合计用整数分相加，不走浮点 */
 const groups = computed(() => {
   const map = new Map()
   for (const tx of items.value) {
     const d = tx.biz_date
-    if (!map.has(d)) map.set(d, { date: d, items: [], dateSum: 0 })
-    map.get(d).items.push(tx)
-    map.get(d).dateSum += Number(tx.amount) * (tx.type === 'income' ? 1 : -1)
-  }
-  for (const g of map.values()) {
-    g.dateSum = '今日合计 ¥' + g.dateSum.toFixed(2)
+    if (!map.has(d)) map.set(d, { date: d, title: formatDateCN(d), items: [], incomeCents: 0, expenseCents: 0 })
+    const g = map.get(d)
+    g.items.push(tx)
+    if (tx.type === 'income') g.incomeCents += yuanToCents(tx.amount)
+    else g.expenseCents += yuanToCents(tx.amount)
   }
   return [...map.values()]
 })
@@ -268,11 +285,16 @@ const showEditPay = ref(false)
 const showEditDate = ref(false)
 const editForm = ref(null)
 const editDateParts = ref([])
-const editCategoryOptions = computed(() =>
-  cats.value
-    .filter((c) => c.type === current.value?.type)
-    .map((c) => ({ text: c.name, value: c.id }))
-)
+
+// 只能换成启用中的分类；原分类若已停用则保留在列表里作为当前值
+const editCategoryOptions = computed(() => {
+  if (!current.value) return []
+  const sameType = cats.value.filter((c) => c.type === current.value.type)
+  const options = sameType.filter((c) => c.status === 'active')
+  const cur = sameType.find((c) => c.id === current.value.category_id)
+  if (cur && cur.status !== 'active') options.unshift(cur)
+  return options.map((c) => ({ text: c.status === 'active' ? c.name : `${c.name}（已停用）`, value: c.id }))
+})
 const editCategoryName = computed(
   () => cats.value.find((c) => c.id === editForm.value?.category_id)?.name || ''
 )
@@ -321,7 +343,7 @@ async function saveEdit() {
 async function onDelete() {
   showConfirmDialog({
     title: '确认删除',
-    message: `确定删除这笔${typeLabel(current.value.type)}（¥${current.value.amount}）吗？\n删除后可在回收站恢复。`
+    message: `确定删除这笔${typeLabel(current.value.type)}（${formatMoney(current.value.amount)}）吗？\n删除后可在回收站恢复。`
   }).then(async () => {
     await api.delete(`/transactions/${current.value.id}`)
     showDetail.value = false
@@ -353,9 +375,15 @@ onActivated(async () => {
   font-size: 13px;
   display: flex;
   justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
 }
 .date-sum {
   color: #666;
+  white-space: nowrap;
+}
+.date-sum b {
+  font-weight: 600;
 }
 .tx-cat {
   font-weight: 600;

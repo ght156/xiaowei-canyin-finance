@@ -37,18 +37,23 @@
       <div class="summary-main">
         <div>
           <div class="s-label">收入</div>
-          <div class="s-value amount-income">¥{{ summary.income }}</div>
+          <div class="s-value amount-income">{{ formatMoney(summary.income) }}</div>
         </div>
         <div>
           <div class="s-label">支出</div>
-          <div class="s-value amount-expense">¥{{ summary.expense }}</div>
+          <div class="s-value amount-expense">{{ formatMoney(summary.expense) }}</div>
         </div>
         <div>
           <div class="s-label">利润</div>
-          <div class="s-value">{{ summary.profit }}</div>
+          <div class="s-value">{{ formatMoney(summary.profit) }}</div>
         </div>
       </div>
       <div class="summary-rate">利润率：{{ summary.profit_rate ?? '—' }}</div>
+      <div class="summary-metrics" v-if="mode !== 'day' && summary.business_days > 0">
+        本期营业 {{ summary.business_days }} 天
+        · 日均收入 {{ formatMoney(summary.avg_daily_income ?? '0.00') }}
+        · 日均利润 {{ formatMoney(summary.avg_daily_profit ?? '0.00') }}
+      </div>
     </div>
 
     <!-- 分店铺（全部店铺时显示） -->
@@ -57,8 +62,8 @@
         v-for="s in summary.by_shop"
         :key="s.shop_id"
         :title="s.shop_name"
-        :value="'利润 ¥' + s.profit"
-        :label="`收入 ¥${s.income} · 支出 ¥${s.expense}`"
+        :value="'利润 ' + formatMoney(s.profit)"
+        :label="`收入 ${formatMoney(s.income)} · 支出 ${formatMoney(s.expense)}`"
       />
     </van-cell-group>
 
@@ -68,9 +73,16 @@
       <div ref="trendChart" class="chart"></div>
     </div>
 
-    <!-- 支出构成 -->
+    <!-- 支出构成：文字为主，饼图为辅 -->
     <div class="chart-card block" v-if="expenseCats.length">
       <div class="chart-title">支出构成</div>
+      <div class="expense-list">
+        <div class="expense-row" v-for="c in expenseCats" :key="c.category_id">
+          <span class="e-name">{{ c.category_name }}</span>
+          <span class="e-amount">{{ formatMoney(c.amount) }}</span>
+          <span class="e-pct">{{ c.percentage ?? '—' }}</span>
+        </div>
+      </div>
       <div ref="pieChart" class="chart"></div>
     </div>
 
@@ -105,10 +117,10 @@
 </template>
 
 <script setup>
-import { computed, nextTick, onActivated, ref } from 'vue'
+import { computed, nextTick, onActivated, onUnmounted, ref } from 'vue'
 import * as echarts from 'echarts'
 import api from '../api'
-import { dayjs } from '../utils/format'
+import { dayjs, formatMoney } from '../utils/format'
 import { useShopStore } from '../stores/shops'
 
 const shopStore = useShopStore()
@@ -193,7 +205,6 @@ async function loadAll() {
             : { ...p, start: start.value, end: end.value }
     })
     expenseCats.value = ec.data
-    loaded.value = true
     await nextTick()
     renderTrend()
     renderPie()
@@ -210,9 +221,15 @@ function monthEndOf() {
 const trendChart = ref(null)
 const pieChart = ref(null)
 
+// 图表实例复用：同一 DOM 不重复 init，切换日期/店铺只 setOption
+function getChart(dom) {
+  if (!dom) return null
+  return echarts.getInstanceByDom(dom) || echarts.init(dom)
+}
+
 function renderTrend() {
-  if (!trendChart.value || !trend.value.length) return
-  const chart = echarts.init(trendChart.value)
+  const chart = getChart(trendChart.value)
+  if (!chart || !trend.value.length) return
   chart.setOption({
     grid: { left: 40, right: 12, top: 30, bottom: 24 },
     tooltip: { trigger: 'axis' },
@@ -223,14 +240,14 @@ function renderTrend() {
       { name: '收入', type: 'bar', data: trend.value.map((t) => Number(t.income)), itemStyle: { color: '#07c160' } },
       { name: '支出', type: 'bar', data: trend.value.map((t) => Number(t.expense)), itemStyle: { color: '#ee0a24' } }
     ]
-  })
+  }, { notMerge: true })
 }
 
 function renderPie() {
-  if (!pieChart.value || !expenseCats.value.length) return
-  const chart = echarts.init(pieChart.value)
+  const chart = getChart(pieChart.value)
+  if (!chart || !expenseCats.value.length) return
   chart.setOption({
-    tooltip: { trigger: 'item', formatter: '{b}: ¥{c}（{d}%）' },
+    tooltip: { trigger: 'item', formatter: '{b}: {c}元（{d}%）' },
     legend: { orient: 'vertical', right: 0, top: 'middle', type: 'scroll' },
     series: [
       {
@@ -241,8 +258,20 @@ function renderPie() {
         label: { show: false }
       }
     ]
-  })
+  }, { notMerge: true })
 }
+
+function handleResize() {
+  trendChart.value && echarts.getInstanceByDom(trendChart.value)?.resize()
+  pieChart.value && echarts.getInstanceByDom(pieChart.value)?.resize()
+}
+
+window.addEventListener('resize', handleResize)
+onUnmounted(() => {
+  window.removeEventListener('resize', handleResize)
+  trendChart.value && echarts.getInstanceByDom(trendChart.value)?.dispose()
+  pieChart.value && echarts.getInstanceByDom(pieChart.value)?.dispose()
+})
 
 onActivated(async () => {
   await shopStore.load()
@@ -286,6 +315,15 @@ onActivated(async () => {
   margin-top: 12px;
   font-size: 14px;
 }
+.summary-metrics {
+  text-align: center;
+  color: #1989fa;
+  background: #e8f7ff;
+  border-radius: 8px;
+  margin-top: 10px;
+  padding: 8px;
+  font-size: 13px;
+}
 .chart-card {
   margin: 12px;
   border-radius: 12px;
@@ -294,7 +332,34 @@ onActivated(async () => {
 }
 .chart-title {
   font-weight: 600;
-  margin-bottom: 4px;
+  margin-bottom: 8px;
+}
+.expense-list {
+  margin-bottom: 8px;
+}
+.expense-row {
+  display: flex;
+  align-items: center;
+  padding: 8px 4px;
+  border-bottom: 1px solid #f5f5f5;
+  font-size: 14px;
+}
+.expense-row:last-child {
+  border-bottom: none;
+}
+.e-name {
+  flex: 1;
+  font-weight: 500;
+}
+.e-amount {
+  color: #333;
+  font-weight: 600;
+  margin-right: 12px;
+}
+.e-pct {
+  color: #999;
+  width: 56px;
+  text-align: right;
 }
 .chart {
   width: 100%;

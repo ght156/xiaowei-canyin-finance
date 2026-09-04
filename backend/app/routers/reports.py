@@ -16,6 +16,7 @@ from ..schemas import (
 )
 from ..security import get_current_user
 from ..services import reports as svc
+from ..tz import today_cn
 
 router = APIRouter(prefix="/api/reports", tags=["reports"])
 
@@ -47,7 +48,7 @@ def daily_report(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    d = _parse_date(date, "date", default=datetime.now().date())
+    d = _parse_date(date, "date", default=today_cn())
     sid, _ = _resolve_shop(db, shop_id)
     return svc.summarize(db, d, d, sid)
 
@@ -126,12 +127,13 @@ def overview(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    """首页数据：今日、本月、最近 7 天趋势，一次请求全部返回。"""
-    today = datetime.now().date()
+    """首页数据：今日、昨日、本月、最近 7 天趋势，一次请求全部返回。"""
+    today = today_cn()
     month_start = today.replace(day=1)
     sid, shop_name = _resolve_shop(db, shop_id)
 
     today_sum = svc.summarize(db, today, today, sid)
+    yesterday_sum = svc.summarize(db, today - timedelta(days=1), today - timedelta(days=1), sid)
     month_sum = svc.summarize(db, month_start, today, sid)
     trend = svc.daily_trend(db, today - timedelta(days=6), today, sid)
 
@@ -143,6 +145,7 @@ def overview(
 
     return OverviewResponse(
         today=period(today_sum),
+        yesterday=period(yesterday_sum),
         month=period(month_sum),
         trend=[DailyPoint(**p) for p in trend],
         shop_id=sid,

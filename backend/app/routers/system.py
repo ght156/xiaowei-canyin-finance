@@ -4,16 +4,18 @@ import io
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi.responses import FileResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from ..config import DB_PATH
+from ..config import BACKUP_DIR, DB_PATH
 from ..database import get_db
 from ..models import AuditLog, BackupRecord, Transaction, User
 from ..schemas import TransactionOut, UserCreate, UserOut, UserUpdate
 from ..security import hash_password, require_admin
 from ..services.audit import log_action
 from ..services.backup import create_backup, restore_backup
+from ..tz import naive_now
 from ..utils import PAYMENT_LABELS, TYPE_LABELS, cents_to_yuan
 
 router = APIRouter(tags=["system"])
@@ -48,6 +50,21 @@ def update_user(user_id: int, body: UserUpdate, db: Session = Depends(get_db), a
     before = {"role": user.role, "status": user.status}
     if user.id == admin.id and body.status == "disabled":
         raise HTTPException(400, "不能停用自己的账号")
+
+    # 保护系统最后一个启用中的管理员：降级或停用前必须还有其他 active admin
+    if user.role == "admin" and user.status == "active":
+        loses_admin = (body.role == "owner") or (body.status == "disabled")
+        if loses_admin:
+            others = db.scalar(
+                select(func.count(User.id)).where(
+                    User.role == "admin",
+                    User.status == "active",
+                    User.id != user.id,
+                )
+            )
+            if not others:
+                raise HTTPException(400, "系统至少需要保留一个启用的管理员账号。")
+
     if body.password is not None:
         user.password_hash = hash_password(body.password)
     if body.role is not None:
@@ -127,13 +144,25 @@ def create_backup_now(db: Session = Depends(get_db), admin: User = Depends(requi
 
 @router.post("/api/backups/{file_name}/restore")
 def restore_from_backup(file_name: str, db: Session = Depends(get_db), admin: User = Depends(require_admin)):
+    """恢复备份：内部会先创建恢复前安全备份，失败自动回滚。"""
     try:
         restore_backup(db, file_name)
     except (FileNotFoundError, ValueError) as e:
         raise HTTPException(400, str(e))
     log_action(db, admin.id, "restore_backup", "backup_record", None, after={"file_name": file_name})
     db.commit()
-    return {"ok": True, "message": "恢复完成，请重启服务后刷新页面"}
+    return {"ok": True, "message": "恢复完成，系统已切回备份时间点的数据"}
+
+
+@router.get("/api/backups/{file_name}/download")
+def download_backup(file_name: str, db: Session = Depends(get_db), admin: User = Depends(require_admin)):
+    """下载备份文件到本机/手机，用于异地保存。"""
+    if "/" in file_name or "\\" in file_name or ".." in file_name:
+        raise HTTPException(400, "非法文件名")
+    path = BACKUP_DIR / file_name
+    if not path.exists():
+        raise HTTPException(404, "备份文件不存在")
+    return FileResponse(str(path), filename=file_name, media_type="application/octet-stream")
 
 
 # ---------------- 数据导出 ----------------
@@ -184,7 +213,7 @@ def export_csv(
             ]
         )
 
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    ts = naive_now().strftime("%Y%m%d_%H%M%S")
     # BOM 头保证 Excel 直接打开中文不乱码
     content = "\ufeff" + buf.getvalue()
     return Response(

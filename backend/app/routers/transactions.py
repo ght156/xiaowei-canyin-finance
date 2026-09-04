@@ -1,5 +1,6 @@
 """收支流水：新增（所有用户）、查询、管理员编辑/软删除/恢复，全部写审计。"""
-from datetime import datetime
+from datetime import date as _date_type
+from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
@@ -15,6 +16,8 @@ from ..schemas import (
 )
 from ..security import get_current_user, require_admin
 from ..services.audit import log_action
+from ..services.backup import maybe_auto_backup
+from ..tz import naive_now
 from ..utils import AmountError, cents_to_yuan, parse_amount_to_cents
 
 router = APIRouter(prefix="/api/transactions", tags=["transactions"])
@@ -78,6 +81,8 @@ def create_transaction(
     cents = _parse_amount_or_422(body.amount)
     _validate_refs(db, body.shop_id, body.type, body.category_id)
 
+    duplicate = _detect_duplicate(db, user.id, body, cents)
+
     tx = Transaction(
         shop_id=body.shop_id,
         type=body.type,
@@ -92,8 +97,33 @@ def create_transaction(
     db.flush()
     log_action(db, user.id, "create", "transaction", tx.id, after=serialize_tx(tx))
     db.commit()
+    # 每天第一笔流水时触发当日自动备份，不依赖应用重启；备份失败不阻塞记账
+    try:
+        maybe_auto_backup(db)
+    except Exception:
+        pass
     db.refresh(tx)
-    return serialize_tx(tx)
+    out = serialize_tx(tx)
+    out["duplicate_warning"] = duplicate
+    return out
+
+
+def _detect_duplicate(db: Session, user_id: int, body: TransactionCreate, cents: int) -> bool:
+    """30 秒内同用户/店铺/类型/分类/金额/日期的流水 → 提示可能重复（不禁止）。"""
+    window_start = naive_now() - timedelta(seconds=30)
+    exists = db.scalar(
+        select(Transaction.id).where(
+            Transaction.created_by == user_id,
+            Transaction.shop_id == body.shop_id,
+            Transaction.type == body.type,
+            Transaction.category_id == body.category_id,
+            Transaction.amount_cents == cents,
+            Transaction.biz_date == body.biz_date,
+            Transaction.deleted_at.is_(None),
+            Transaction.created_at >= window_start,
+        )
+    )
+    return exists is not None
 
 
 @router.get("", response_model=PagedTransactions)
@@ -146,9 +176,7 @@ def list_transactions(
 
 
 def _to_date(value):
-    from datetime import date as _date
-
-    if isinstance(value, _date):
+    if isinstance(value, _date_type):
         return value
     return datetime.strptime(str(value), "%Y-%m-%d").date()
 
@@ -181,6 +209,9 @@ def update_transaction(
         cat = db.get(Category, body.category_id)
         if cat is None or cat.type != tx.type:
             raise HTTPException(400, "分类不存在或类型不匹配")
+        # 只有主动更换分类时才要求启用中；保留历史停用分类不动，保护历史数据
+        if cat.id != tx.category_id and cat.status != "active":
+            raise HTTPException(400, "该分类已停用，不能用于新的流水，请选择启用中的分类")
         tx.category_id = body.category_id
     if body.amount is not None:
         tx.amount_cents = _parse_amount_or_422(body.amount)
@@ -206,7 +237,7 @@ def delete_transaction(
     """软删除：仅标记 deleted_at，可在回收站恢复。"""
     tx = _get_live_tx(db, tx_id)
     before = serialize_tx(tx)
-    tx.deleted_at = datetime.now()
+    tx.deleted_at = naive_now()
     log_action(db, admin.id, "soft_delete", "transaction", tx.id, before=before)
     db.commit()
     return {"ok": True, "message": "已移入回收站"}

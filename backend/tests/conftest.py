@@ -29,10 +29,10 @@ def client():
 
 @pytest.fixture(autouse=True)
 def clean_tables():
-    """每个测试前清空流水/审计/备份记录，并把分类/店铺恢复为启用，保证断言确定性。"""
+    """每个测试前清空流水/审计/备份记录，并把分类/店铺/用户恢复为种子状态，保证断言确定性。"""
     from sqlalchemy import delete, update
 
-    from app.models import AuditLog, BackupRecord, Category, Shop, Transaction
+    from app.models import AuditLog, BackupRecord, Category, Shop, Transaction, User
 
     with SessionLocal() as db:
         db.execute(delete(Transaction))
@@ -40,6 +40,10 @@ def clean_tables():
         db.execute(delete(BackupRecord))
         db.execute(update(Category).values(status="active"))
         db.execute(update(Shop).values(status="active"))
+        # 用户表恢复到种子状态（id 1=admin，2=owner），删除测试中新建的用户
+        db.execute(delete(User).where(User.id > 2))
+        db.execute(update(User).where(User.id == 1).values(role="admin", status="active"))
+        db.execute(update(User).where(User.id == 2).values(role="owner", status="active"))
         db.commit()
     yield
 

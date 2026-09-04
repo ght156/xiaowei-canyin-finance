@@ -26,8 +26,18 @@ def _base_query(db: Session, start: date, end: date, shop_id: int | None):
 def summarize(
     db: Session, start: date, end: date, shop_id: int | None = None
 ) -> dict:
-    """区间汇总：总收入、总支出、利润、利润率、分店铺明细。"""
+    """区间汇总：总收入、总支出、利润、利润率、分店铺明细、营业天数与日均。"""
     rows = _base_query(db, start, end, shop_id).group_by(Transaction.type, Transaction.shop_id).all()
+
+    # 营业日：当天存在至少一笔收入或支出流水
+    days_q = db.query(func.count(func.distinct(Transaction.biz_date))).filter(
+        Transaction.deleted_at.is_(None),
+        Transaction.biz_date >= start,
+        Transaction.biz_date <= end,
+    )
+    if shop_id is not None:
+        days_q = days_q.filter(Transaction.shop_id == shop_id)
+    business_days = int(days_q.scalar() or 0)
 
     income = 0
     expense = 0
@@ -70,6 +80,9 @@ def summarize(
         "profit": cents_to_yuan(profit),
         "profit_rate": profit_rate(profit, income),
         "by_shop": by_shop,
+        "business_days": business_days,
+        "avg_daily_income": cents_to_yuan(income // business_days) if business_days else None,
+        "avg_daily_profit": cents_to_yuan(profit // business_days) if business_days else None,
     }
 
 

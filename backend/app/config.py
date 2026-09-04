@@ -31,3 +31,26 @@ BACKUP_KEEP = int(os.environ.get("APP_BACKUP_KEEP", "30"))
 
 _cors = os.environ.get("APP_CORS_ORIGINS", "*")
 CORS_ORIGINS = [o.strip() for o in _cors.split(",") if o.strip()]
+
+# development：允许宽松默认值；production：强制安全配置
+APP_ENV = os.environ.get("APP_ENV", "development")
+
+_DEV_SECRET = "dev-secret-please-change-in-production"
+
+
+def check_production_security() -> None:
+    """生产环境启动前强制安全检查，不满足则拒绝启动。"""
+    if APP_ENV != "production":
+        return
+    if not SECRET_KEY or SECRET_KEY == _DEV_SECRET:
+        raise RuntimeError(
+            "生产环境安全检查失败：必须设置随机 APP_SECRET_KEY。"
+            "生成方法：python -c \"import secrets; print(secrets.token_hex(32))\""
+        )
+    if "*" in CORS_ORIGINS:
+        raise RuntimeError(
+            "生产环境安全检查失败：APP_CORS_ORIGINS 不能为 *，请限定为实际前端域名。"
+        )
+
+
+check_production_security()

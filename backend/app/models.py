@@ -14,10 +14,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .database import Base
-
-
-def now_local() -> datetime:
-    return datetime.now()
+from .tz import naive_now
 
 
 class User(Base):
@@ -28,7 +25,7 @@ class User(Base):
     password_hash: Mapped[str] = mapped_column(String(100))
     role: Mapped[str] = mapped_column(String(20), default="owner")  # admin=管理员 / owner=店主
     status: Mapped[str] = mapped_column(String(20), default="active")  # active / disabled
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=now_local)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=naive_now)
 
 
 class Shop(Base):
@@ -37,7 +34,7 @@ class Shop(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(50), unique=True)
     status: Mapped[str] = mapped_column(String(20), default="active")
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=now_local)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=naive_now)
 
 
 class Category(Base):
@@ -49,7 +46,7 @@ class Category(Base):
     name: Mapped[str] = mapped_column(String(50))
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
     status: Mapped[str] = mapped_column(String(20), default="active")
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=now_local)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=naive_now)
 
 
 class Transaction(Base):
@@ -68,8 +65,8 @@ class Transaction(Base):
     biz_date: Mapped[date] = mapped_column(Date)
     remark: Mapped[str | None] = mapped_column(String(200), nullable=True)
     created_by: Mapped[int] = mapped_column(ForeignKey("users.id"))
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=now_local)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=now_local, onupdate=now_local)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=naive_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=naive_now, onupdate=naive_now)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)  # 软删除
 
     shop: Mapped["Shop"] = relationship()
@@ -88,7 +85,7 @@ class AuditLog(Base):
     entity_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     before_data: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     after_data: Mapped[dict | None] = mapped_column(JSON, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=now_local)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=naive_now)
 
 
 class BackupRecord(Base):
@@ -98,4 +95,4 @@ class BackupRecord(Base):
     file_name: Mapped[str] = mapped_column(String(100))
     backup_type: Mapped[str] = mapped_column(String(20), default="manual")  # manual / auto
     status: Mapped[str] = mapped_column(String(20), default="success")
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=now_local)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=naive_now)
