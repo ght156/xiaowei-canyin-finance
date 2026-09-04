@@ -19,9 +19,16 @@
     <template v-if="auth.isAdmin">
       <!-- 店铺管理 -->
       <van-cell-group inset title="店铺管理" class="block">
-        <van-cell v-for="s in shops" :key="s.id" :title="s.name" is-link @click="toggleShop(s)">
+        <van-cell v-for="s in shops" :key="s.id" :title="s.name">
+          <template #title>
+            {{ s.name }}
+            <van-tag v-if="s.status !== 'active'" type="danger" size="mini">已停用</van-tag>
+          </template>
           <template #value>
-            <span class="cell-status">{{ s.status === 'active' ? '营业中' : '已停用' }}</span>
+            <van-button size="mini" :plain="s.status === 'active'" :type="s.status === 'active' ? 'danger' : 'primary'"
+              @click="toggleShop(s)">
+              {{ s.status === 'active' ? '停用' : '启用' }}
+            </van-button>
             <van-button size="mini" type="danger" plain @click="deleteShop(s)">删除</van-button>
           </template>
         </van-cell>
@@ -462,11 +469,6 @@ onMounted(loadAll)
 }
 .van-button + .van-button {
   margin-left: 6px;
-}
-.cell-status {
-  color: #666;
-  margin-right: 8px;
-  font-size: 13px;
 }
 /* 操作按钮较多时允许换行，避免小屏溢出 */
 :deep(.van-cell__value) {
