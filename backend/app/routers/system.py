@@ -63,6 +63,40 @@ def list_users(db: Session = Depends(get_db), admin: User = Depends(require_admi
     ).all()
 
 
+def _apply_shops_on_create(db: Session, user: User, body: UserCreate, admin: User) -> dict:
+    """创建/恢复用户时按角色处理店铺授权（全量替换，不保留删除前的旧权限）。
+
+    - admin：清空绑定（默认全部店铺），无需 shop_ids
+    - owner：未提供 shop_ids → 绑定全部 active 店铺；提供 → 按提供值替换
+    - employee：必须显式提供至少一个店铺，否则 400
+    返回审计 after 片段（角色 + 店铺名列表）。
+    """
+    if body.role == "admin":
+        db.query(UserShop).filter(UserShop.user_id == user.id).delete(synchronize_session=False)
+        db.flush()
+        return {"role": "admin", "shops": []}
+
+    if body.role == "employee" and not body.shop_ids:
+        raise HTTPException(400, "员工至少需要选择一个授权店铺。")
+
+    if body.shop_ids:
+        _set_user_shops(db, user, body.shop_ids, admin)
+        names = [s.name for s in sorted(
+            db.scalars(select(Shop).where(Shop.id.in_(body.shop_ids), Shop.deleted_at.is_(None))).all(),
+            key=lambda x: x.id,
+        )]
+    else:
+        # owner 未指定：默认绑定全部 active 店铺（先清空旧绑定，避免残留）
+        db.query(UserShop).filter(UserShop.user_id == user.id).delete(synchronize_session=False)
+        db.flush()
+        names = []
+        for shop in db.scalars(select(Shop).where(Shop.deleted_at.is_(None))).all():
+            db.add(UserShop(user_id=user.id, shop_id=shop.id))
+            names.append(shop.name)
+        db.flush()
+    return {"role": body.role, "shops": names}
+
+
 @router.post("/api/users", response_model=UserOut, status_code=201)
 def create_user(body: UserCreate, db: Session = Depends(get_db), admin: User = Depends(require_admin)):
     username = body.username.strip()
@@ -70,13 +104,18 @@ def create_user(body: UserCreate, db: Session = Depends(get_db), admin: User = D
     if existing and existing.deleted_at is None:
         raise HTTPException(400, "用户名已存在")
     if existing:
-        # 同名用户曾被删除：恢复账号（用新密码、新角色）
+        # 同名用户曾被删除：恢复账号（新密码、新角色、店铺授权按本次请求全量重设）
+        before = {
+            "role": existing.role,
+            "shops": [link.shop.name for link in sorted(existing.shop_links, key=lambda l: l.shop_id)],
+        }
         existing.deleted_at = None
         existing.status = "active"
         existing.role = body.role
         existing.password_hash = hash_password(body.password)
+        after = _apply_shops_on_create(db, existing, body, admin)
         log_action(db, admin.id, "restore", "user", existing.id,
-                   after={"username": username, "role": body.role})
+                   before=before, after=after)
         db.commit()
         db.refresh(existing)
         return existing
@@ -84,11 +123,8 @@ def create_user(body: UserCreate, db: Session = Depends(get_db), admin: User = D
     user = User(username=username, password_hash=hash_password(body.password), role=body.role)
     db.add(user)
     db.flush()
-    if user.role != "admin" and body.shop_ids:
-        _set_user_shops(db, user, body.shop_ids, admin)
-    elif user.role in ("owner", "employee"):
-        _bind_all_active_shops(db, user)
-    log_action(db, admin.id, "create", "user", user.id, after={"username": username, "role": body.role})
+    after = _apply_shops_on_create(db, user, body, admin)
+    log_action(db, admin.id, "create", "user", user.id, after=after)
     db.commit()
     db.refresh(user)
     return user

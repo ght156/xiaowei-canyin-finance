@@ -282,7 +282,8 @@ async function loadAll() {
 
 // ---------- 新增用户 / 授权店铺 ----------
 function openUserForm() {
-  userForm.value = { username: '', password: '', role: 'employee', shop_ids: [...shops.value.map((s) => s.id)] }
+  // 店铺默认不勾选：员工必须显式选择（后端同样强制），避免顺手建号就拿到全部店铺
+  userForm.value = { username: '', password: '', role: 'employee', shop_ids: [] }
   showUserForm.value = true
 }
 
